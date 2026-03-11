@@ -108,50 +108,53 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
 try:
     base = carregar_base()
     if not base.empty:
-        # A TABELA AGORA É GLOBAL NA SESSÃO PARA NÃO APAGAR NUNCA
-        if "tabela_fixa" not in st.session_state:
-            st.session_state.tabela_fixa = pd.DataFrame(columns=["Equipamento", "Qtd"])
+        # Memória persistente
+        if "dados_tabela" not in st.session_state:
+            st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
 
         st.sidebar.markdown("### Tecnologia de Processos")
         st.sidebar.title("📋 Planejamento de Produção")
         
         lista_ups = sorted(base['CELULA'].unique().tolist())
-        sel_ups = st.sidebar.selectbox("Selecionar Célula Principal", lista_ups, index=lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0)
+        sel_ups = st.sidebar.selectbox("Selecionar Célula", lista_ups, index=lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0)
         
         regra_atual = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
+        
+        # Padrão Falso (Desabilitado) para liberar modelos
         liberar_modelos = st.sidebar.checkbox("🔓 Liberar modelos de outras UPS?", value=False)
+        
         h_ini = st.sidebar.text_input("Início da Produção", value="07:45")
         tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
         n_nat = st.sidebar.number_input("N Natural", value=regra_atual['n_nat'], min_value=1)
         n_dia = st.sidebar.number_input("N do Dia", value=regra_atual['n_nat'], min_value=1)
         fator = n_dia / n_nat
 
-        # AQUI ESTÁ O TRUQUE: O editor sempre vê todas as opções, mas o menu de sugestões muda
-        todas_opcoes = sorted(base['DISPLAY'].tolist())
-        opcoes_filtradas = todas_opcoes if liberar_modelos else sorted(base[base['CELULA'] == sel_ups]['DISPLAY'].tolist())
+        opcoes_menu = sorted(base['DISPLAY'].tolist()) if liberar_modelos else sorted(base[base['CELULA'] == sel_ups]['DISPLAY'].tolist())
 
         col1, col2 = st.columns([0.8, 0.2])
-        with col1: st.header(f"📋 Grade de Trabalho: {sel_ups}")
+        # Removido o nome da UPS do cabeçalho conforme solicitado
+        with col1: st.header("📋 Grade de Trabalho")
         with col2: 
             if st.button("🗑️ Limpar"): 
-                st.session_state.tabela_fixa = pd.DataFrame(columns=["Equipamento", "Qtd"])
+                st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
                 st.rerun()
 
-        # Usamos uma chave FIXA para o editor não resetar ao mudar o checkbox
-        st.session_state.tabela_fixa = st.data_editor(
-            st.session_state.tabela_fixa, 
+        # Configuração do Editor - hide_index=True para remover o "None" e números
+        st.session_state.dados_tabela = st.data_editor(
+            st.session_state.dados_tabela, 
             num_rows="dynamic", 
             use_container_width=True,
+            hide_index=True,
             column_config={
-                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes_filtradas, required=True), 
+                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes_menu, required=True), 
                 "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)
             },
-            key="planejador_estavel" 
+            key="planejador_final" 
         )
 
         if st.button("🚀 Gerar Planejamento"):
-            if not st.session_state.tabela_fixa.empty:
-                r = calcular(st.session_state.tabela_fixa, base, h_ini, fator, tem_gin, regra_atual)
+            if not st.session_state.dados_tabela.empty:
+                r = calcular(st.session_state.dados_tabela, base, h_ini, fator, tem_gin, regra_atual)
                 st.divider()
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Planejado", f"{int(r['tot'])} pçs")
@@ -160,8 +163,10 @@ try:
                 c4, c5, c6 = st.columns(3)
                 c4.metric("☕ Café M", regra_atual['cafe_m']); c5.metric("🍱 Almoço", regra_atual['almoco']); c6.metric("☕ Café T", regra_atual['cafe_t'])
                 st.subheader("🗓️ Cronograma de Produção")
+                
                 def style_table(row):
                     return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row)
+                
                 st.dataframe(r['df'].style.apply(style_table, axis=1), use_container_width=True, hide_index=True)
             else: st.warning("Adicione modelos na tabela.")
 except Exception as e: st.error(f"Erro Crítico: {e}")
