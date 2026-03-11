@@ -90,12 +90,14 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
     termino = "Não finalizado"
     for _, s in slots.iterrows():
         if s['Label']:
-            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acumulada': tot})
+            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Unid/h': '-', 'Peças': 0, 'Acumulada': tot})
             continue
         acum += s['Minutos']
         p_b, mods = 0, []
+        unidade_display = "-"
         while c_idx < len(df_in):
             t_p = df_in.loc[c_idx, 'T_PC']
+            unidade_display = str(int(df_in.loc[c_idx, 'UNIDADE_HORA']))
             if pd.isna(t_p) or t_p <= 0: c_idx += 1; continue
             if acum >= (t_p - 0.001):
                 q = min(math.floor(acum / t_p + 0.001), df_in.loc[c_idx, 'FALTA'])
@@ -106,7 +108,7 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
                 if df_in.loc[c_idx, 'FALTA'] <= 0: c_idx += 1
                 else: break
             else: break
-        res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_b), 'Acumulada': int(tot)})
+        res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Unid/h': unidade_display, 'Peças': int(p_b), 'Acumulada': int(tot)})
         if tot >= total_desejado and termino == "Não finalizado" and total_desejado > 0:
             m_usados = s['Minutos'] - acum
             h_str, m_str = s['Horário'].split(' – ')[0].split(':')
