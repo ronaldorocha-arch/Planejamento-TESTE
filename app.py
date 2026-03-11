@@ -4,27 +4,31 @@ import math
 from datetime import datetime, timedelta
 
 # Configuração da página
-st.set_page_config(page_title="Tecnologia de Processos - Planejamento NHS", page_icon="🏭", layout="wide")
+st.set_page_config(page_title="Tecnologia de Processos - NHS", page_icon="🏭", layout="wide")
 
-# --- ESTILO PARA IMPRESSÃO PROFISSIONAL ---
+# --- ESTILO PARA IMPRESSÃO ULTRA ECONÔMICA ---
 st.markdown("""
     <style>
+    /* Esconde elementos desnecessários na impressão */
     @media print {
-        section[data-testid="stSidebar"], .stButton, footer, header, .stTabs {
+        section[data-testid="stSidebar"], .stButton, footer, header, .stExpander, .stMarkdown:has(button) {
             display: none !important;
         }
         .main .block-container {
             padding: 0 !important;
             margin: 0 !important;
         }
-        .ups-container {
-            page-break-inside: avoid;
-            border-bottom: 2px solid #000;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
+        .stTable {
+            font-size: 11px !important;
         }
-        h2 { font-size: 22px !important; color: black !important; }
-        .stTable { font-size: 12px !important; }
+        .print-section {
+            page-break-inside: avoid;
+            border-bottom: 1px dashed #000;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+        }
+        h2 { font-size: 16px !important; margin: 0 !important; padding: 0 !important; }
+        p { font-size: 12px !important; margin: 2px 0 !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -47,18 +51,18 @@ def carregar_base():
     try:
         df_raw = pd.read_csv(URL_BASE, header=None).astype(str)
         m_row = -1
-        for r in range(min(300, len(df_raw))):
+        for r in range(len(df_raw)):
             if "MODELO" in str(df_raw.iloc[r, 6]).upper():
                 m_row = r
                 break
         if m_row == -1: return pd.DataFrame()
-        dados = df_raw.iloc[m_row+1:m_row+3000].copy()
+        dados = df_raw.iloc[m_row+1:].copy()
         lista_final = []
         for i in range(len(dados)):
             mod = str(dados.iloc[i, 6]).strip()
             uni = pd.to_numeric(dados.iloc[i, 7], errors='coerce')
             cel = str(dados.iloc[i, 9]).strip()
-            if mod != 'nan' and len(mod) > 3 and not pd.isna(uni):
+            if mod != 'nan' and len(mod) > 2 and not pd.isna(uni):
                 lista_final.append({'ID': mod, 'UNIDADE_HORA': uni, 'CELULA': cel, 'DISPLAY': f"[{cel}] {mod}"})
         return pd.DataFrame(lista_final)
     except: return pd.DataFrame()
@@ -114,42 +118,51 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
 base = carregar_base()
 if not base.empty:
     st.sidebar.subheader("🚀 Tecnologia de Processos")
-    st.sidebar.title("Planejamento Geral")
     l_ups = sorted(REGRAS_HORARIOS.keys())
     selecionadas = st.sidebar.multiselect("Selecione as UPS", l_ups, default=["UPS - 1"])
     h_ini = st.sidebar.text_input("Início", value="07:45")
     tem_gin = st.sidebar.checkbox("Ginástica?", value=False)
-    liberar = st.sidebar.checkbox("🔓 Liberar todos os modelos?", value=False)
     
     if st.sidebar.button("🗑️ Limpar Tudo"):
         st.session_state["rk"] = st.session_state.get("rk", 0) + 1
         st.rerun()
 
     dados_e = {}
+    # Carrega opções únicas para evitar o erro de aparecer apenas 1
+    opcoes_completas = sorted(base['DISPLAY'].unique().tolist())
+
     for ups in selecionadas:
         with st.expander(f"Entrada de Dados: {ups}", expanded=True):
             reg = REGRAS_HORARIOS[ups]
-            opc = sorted(base['DISPLAY'].unique().tolist()) if liberar else sorted(base[base['CELULA'] == ups]['DISPLAY'].tolist())
             c1, c2 = st.columns(2)
             nn = c1.number_input(f"N Nat ({ups})", value=reg['n_nat'], key=f"n_{ups}")
             nd = c2.number_input(f"N Dia ({ups})", value=reg['n_nat'], key=f"d_{ups}")
             ed = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
-                column_config={"Equipamento": st.column_config.SelectboxColumn("Modelo", options=opc), "Qtd": st.column_config.NumberColumn("Qtd")}, key=f"e_{ups}_{st.session_state.get('rk', 0)}")
+                column_config={
+                    "Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes_completas, required=True), 
+                    "Qtd": st.column_config.NumberColumn("Qtd", min_value=0)
+                }, key=f"e_{ups}_{st.session_state.get('rk', 0)}")
             dados_e[ups] = {"df": ed, "fat": nd/nn, "reg": reg}
 
-    if st.button("🚀 GERAR QUADROS PARA IMPRESSÃO"):
+    if st.button("🚀 GERAR QUADROS"):
         for ups, info in dados_e.items():
             if not info['df'].empty:
                 r = calcular(info['df'], base, h_ini, info['fat'], tem_gin, info['reg'])
-                st.markdown(f'<div class="ups-container">', unsafe_allow_html=True)
-                st.header(f"📊 QUADRO DE PRODUÇÃO: {ups}")
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Planejado", f"{int(r['tot'])} pçs")
-                m2.metric("Término", r['term'])
-                m3.metric("Eficiência", f"{info['fat']:.2%}")
+                st.markdown(f'<div class="print-section">', unsafe_allow_html=True)
+                st.subheader(f"QUADRO: {ups}")
+                st.write(f"**Total:** {int(r['tot'])} pçs | **Término:** {r['term']} | **Eficiência:** {info['fat']:.2%}")
                 st.table(r['df'])
                 st.markdown('</div>', unsafe_allow_html=True)
         
-        st.markdown('<button onclick="window.print()" style="width:100%; padding:20px; background:#4CAF50; color:white; border:none; cursor:pointer; font-weight:bold; border-radius:10px;">🖨️ IMPRIMIR TODOS OS QUADROS (Ctrl+P)</button>', unsafe_allow_html=True)
+        # Novo botão de impressão via HTML direto
+        st.markdown('''
+            <br>
+            <a href="javascript:window.print()" style="text-decoration:none;">
+                <div style="background-color:#4CAF50; color:white; padding:15px; text-align:center; border-radius:10px; font-weight:bold; cursor:pointer;">
+                    🖨️ IMPRIMIR ECONOMIZANDO PAPEL (CLIQUE AQUI)
+                </div>
+            </a>
+            <br>
+        ''', unsafe_allow_html=True)
 else:
-    st.error("Erro ao carregar base.")
+    st.error("Erro ao carregar base. Verifique se a planilha tem a coluna 'MODELO'.")
