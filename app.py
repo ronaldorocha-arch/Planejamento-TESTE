@@ -6,14 +6,6 @@ from datetime import datetime, timedelta
 # Configuração da página
 st.set_page_config(page_title="Planejamento de Produção - NHS", page_icon="🏭", layout="wide")
 
-# Banner de Destaque para o Setor
-st.markdown("""
-    <div style="background-color:#004a99;padding:10px;border-radius:10px;margin-bottom:20px">
-    <h1 style="color:white;text-align:center;margin:0;font-family:sans-serif;">🏭 TECNOLOGIA DE PROCESSOS</h1>
-    <p style="color:white;text-align:center;margin:0;">Sistema de Gestão e Planejamento de Produção</p>
-    </div>
-    """, unsafe_allow_html=True)
-
 URL_BASE = "https://docs.google.com/spreadsheets/d/11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E/export?format=csv&gid=0"
 
 # --- CONFIGURAÇÃO DE HORÁRIOS REAIS ---
@@ -100,7 +92,7 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
         acum += s['Minutos']
         p_b, mods = 0, []
         while c_idx < len(df_in):
-            t_p = df_in.loc[ci, 'T_PC'] if 'ci' in locals() else df_in.loc[c_idx, 'T_PC']
+            t_p = df_in.loc[c_idx, 'T_PC']
             if pd.isna(t_p) or t_p <= 0: c_idx += 1; continue
             if acum >= (t_p - 0.001):
                 q = min(math.floor(acum / t_p + 0.001), df_in.loc[c_idx, 'FALTA'])
@@ -123,20 +115,20 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
 try:
     base = carregar_base()
     if not base.empty:
-        # Inicialização da Memória (Session State) para não perder dados
+        # Recupera dados da sessão para não perder a programação
         if "dados_tabela" not in st.session_state:
             st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
 
-        st.sidebar.title("📋 Menu de Controle")
+        # Tecnologia de Processos de volta para a barra lateral
+        st.sidebar.markdown("### Tecnologia de Processos")
+        st.sidebar.title("📋 Planejamento de Produção")
+        
         lista_ups = sorted(base['CELULA'].unique().tolist())
         default_index = lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0
-        sel_ups = st.sidebar.selectbox("Selecionar Célula Principal", lista_ups, index=default_index)
+        sel_ups = st.sidebar.selectbox("Selecionar Célula", lista_ups, index=default_index)
         
         regra_atual = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
-        
-        # Checkbox que agora não zera a tabela
-        liberar_modelos = st.sidebar.checkbox("🔓 Liberar modelos de todas as UPS?", value=False)
-        
+        liberar_modelos = st.sidebar.checkbox("🔓 Liberar modelos de outras UPS?", value=False)
         h_ini = st.sidebar.text_input("Início da Produção", value="07:45")
         tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
         n_nat = st.sidebar.number_input("N Natural", value=regra_atual['n_nat'], min_value=1)
@@ -148,11 +140,11 @@ try:
         col1, col2 = st.columns([0.8, 0.2])
         with col1: st.header(f"📋 Grade de Trabalho: {sel_ups}")
         with col2: 
-            if st.button("🗑️ Limpar Tudo"): 
+            if st.button("🗑️ Limpar"): 
                 st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
                 st.rerun()
 
-        # Editor de dados conectado à memória
+        # Editor de dados que mantém o estado
         st.session_state.dados_tabela = st.data_editor(
             st.session_state.dados_tabela, 
             num_rows="dynamic", 
@@ -161,7 +153,7 @@ try:
                 "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes, required=True), 
                 "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)
             }, 
-            key=f"editor_{sel_ups}" # A chave muda por UPS mas os dados ficam no session_state
+            key=f"editor_{sel_ups}"
         )
 
         if st.button("🚀 Gerar Planejamento"):
@@ -174,10 +166,10 @@ try:
                 c3.metric("Eficiência", f"{fator:.2%}")
                 c4, c5, c6 = st.columns(3)
                 c4.metric("☕ Café M", regra_atual['cafe_m']); c5.metric("🍱 Almoço", regra_atual['almoco']); c6.metric("☕ Café T", regra_atual['cafe_t'])
-                st.subheader("🗓️ Cronograma Final")
+                st.subheader("🗓️ Cronograma de Produção")
                 def style_table(row):
                     return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row)
                 st.dataframe(r['df'].style.apply(style_table, axis=1), use_container_width=True)
-            else: st.warning("Adicione modelos na tabela acima.")
+            else: st.warning("Adicione modelos na tabela.")
     else: st.error("⚠️ Verifique a planilha.")
 except Exception as e: st.error(f"Erro Crítico: {e}")
