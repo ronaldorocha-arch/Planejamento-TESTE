@@ -6,27 +6,40 @@ from datetime import datetime, timedelta
 # Configuração da página
 st.set_page_config(page_title="🧪 LAB MULTI-PRINT - Planejador NHS", page_icon="🧪", layout="wide")
 
-# --- ESTILO PARA IMPRESSÃO ---
+# --- ESTILO PARA IMPRESSÃO ECONÔMICA ---
 st.markdown("""
     <style>
     @media print {
-        section[data-testid="stSidebar"] {
+        section[data-testid="stSidebar"], .stButton, footer, header {
             display: none !important;
         }
         .main .block-container {
-            padding-top: 1rem !important;
+            padding: 0 !important;
+            margin: 0 !important;
         }
-        button {
-            display: none !important;
+        h1, h2, h3 {
+            font-size: 18px !important;
+            margin-bottom: 5px !important;
+            margin-top: 10px !important;
         }
         .stMetric {
-            border: 1px solid #ddd;
-            padding: 5px;
-            border-radius: 5px;
+            border: 1px solid #000;
+            padding: 2px !important;
+            font-size: 12px !important;
         }
-        /* Forçar quebra de página antes de cada cabeçalho de UPS */
+        div[data-testid="stTable"] {
+            font-size: 10px !important;
+        }
+        table {
+            width: 100% !important;
+        }
         .ups-header {
-            page-break-before: always;
+            border-top: 2px solid #000;
+            margin-top: 20px;
+        }
+        /* Tenta evitar quebrar uma tabela no meio */
+        div.stTable {
+            page-break-inside: avoid !important;
         }
     }
     </style>
@@ -49,28 +62,28 @@ REGRAS_HORARIOS = {
 def carregar_base():
     try:
         df_raw = pd.read_csv(URL_BASE, header=None).astype(str)
+        # Localiza a linha que contém "MODELO" na coluna G (índice 6)
         m_row = -1
-        for r in range(min(300, len(df_raw))):
-            val = str(df_raw.iloc[r, 6]).strip().upper()
-            if val == "MODELO":
+        for r in range(len(df_raw)):
+            if "MODELO" in str(df_raw.iloc[r, 6]).upper():
                 m_row = r
                 break
         if m_row == -1: return pd.DataFrame()
-        dados = df_raw.iloc[m_row+1:m_row+3000].copy()
+        
+        dados = df_raw.iloc[m_row+1:].copy()
         lista_final = []
+        # Captura modelos de forma global para não travar a lista
         for i in range(len(dados)):
             modelo = str(dados.iloc[i, 6]).strip()
             unidade = pd.to_numeric(dados.iloc[i, 7], errors='coerce')
-            descricao = str(dados.iloc[i, 8]).strip()
             celula = str(dados.iloc[i, 9]).strip()
             if modelo != 'nan' and len(modelo) > 3 and not pd.isna(unidade):
                 lista_final.append({
-                    'ID': modelo, 'UNIDADE_HORA': unidade, 'DESCRICAO': descricao,
-                    'CELULA': celula, 'DISPLAY': f"[{celula}] {modelo} - {descricao}"
+                    'ID': modelo, 'UNIDADE_HORA': unidade,
+                    'CELULA': celula, 'DISPLAY': f"[{celula}] {modelo}"
                 })
         return pd.DataFrame(lista_final)
-    except Exception as e:
-        st.error(f"Erro: {e}"); return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def gerar_grade_fixa(h_ini_input, regras, tem_gin):
     def para_min(h_str):
@@ -89,7 +102,7 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
                 if not ((m_cafe_m <= m < m_cafe_m+10) or (m_alm_ini <= m < m_alm_fim) or 
                         (m_cafe_t <= m < m_cafe_t+10) or (tem_gin and m_gin <= m < m_gin+10)):
                     m_uteis += 1
-        grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': m_uteis, 'Label': "🍱 ALMOÇO" if is_almoco else None})
+        grade.append({'Horário': f"{pontos[i]}–{pontos[i+1]}", 'Minutos': m_uteis, 'Label': "🍱 ALMOÇO" if is_almoco else None})
     return pd.DataFrame(grade)
 
 def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
@@ -99,10 +112,10 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
     df_in['FALTA'] = pd.to_numeric(df_in['Qtd'], errors='coerce').fillna(0)
     res, acum, c_idx, tot = [], 0.0, 0, 0
     total_desejado = df_in['FALTA'].sum()
-    termino = "Não finalizado"
+    termino = "---"
     for _, s in slots.iterrows():
         if s['Label']:
-            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acumulada': tot})
+            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Total': tot})
             continue
         acum += s['Minutos']
         p_b, mods = 0, []
@@ -113,63 +126,51 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
                 if q > 0:
                     acum -= (q*t_p); df_in.loc[c_idx, 'FALTA'] -= q
                     tot += q; p_b += q
-                    mods.append(f"{df_in.loc[c_idx, 'ID']} ({int(q)})")
+                    mods.append(f"{df_in.loc[c_idx, 'ID']}({int(q)})")
                 if df_in.loc[c_idx, 'FALTA'] <= 0: c_idx += 1
                 else: break
             else: break
-        res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_b), 'Acumulada': int(tot)})
-        if tot >= total_desejado and termino == "Não finalizado" and total_desejado > 0:
+        res.append({'Horário': s['Horário'], 'Modelos': "+".join(mods) if mods else "-", 'Peças': int(p_b), 'Total': int(tot)})
+        if tot >= total_desejado and termino == "---" and total_desejado > 0:
             m_usados = s['Minutos'] - acum
-            h_s, m_s = s['Horário'].split(' – ')[0].split(':')
+            h_s, m_s = s['Horário'].split('–')[0].split(':')
             termino = (datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=m_usados)).strftime("%H:%M")
     return {'df': pd.DataFrame(res), 'tot': tot, 'termino': termino}
 
 # --- INTERFACE ---
-try:
-    base = carregar_base()
-    if not base.empty:
-        st.sidebar.title("🧪 Laboratório de Impressão")
-        lista_ups = sorted(REGRAS_HORARIOS.keys())
-        selecionadas = st.sidebar.multiselect("UPS no Relatório", lista_ups, default=["UPS - 1"])
-        liberar = st.sidebar.checkbox("🔓 Ver todos os modelos?", value=False)
-        h_ini = st.sidebar.text_input("Início", value="07:45")
-        tem_gin = st.sidebar.checkbox("Ginástica?", value=False)
-        if st.sidebar.button("🗑️ Limpar Tudo"):
-            st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
-            st.rerun()
+base = carregar_base()
+if not base.empty:
+    st.sidebar.title("⚙️ Configuração")
+    lista_ups = sorted(REGRAS_HORARIOS.keys())
+    selecionadas = st.sidebar.multiselect("UPS Ativas", lista_ups, default=["UPS - 1"])
+    h_ini = st.sidebar.text_input("Início", value="07:45")
+    tem_gin = st.sidebar.checkbox("Ginástica?", value=False)
+    
+    dados_entrada = {}
+    for ups in selecionadas:
+        with st.expander(f"Entrada: {ups}", expanded=True):
+            regra = REGRAS_HORARIOS[ups]
+            # Busca todas as peças da base para garantir que apareçam
+            opcoes = sorted(base['DISPLAY'].unique().tolist())
+            c1, c2 = st.columns(2)
+            n_nat = c1.number_input(f"N Nat", value=regra['n_nat'], key=f"n_{ups}")
+            n_dia = c2.number_input(f"N Dia", value=regra['n_nat'], key=f"d_{ups}")
+            editor = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
+                column_config={"Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes), "Qtd": st.column_config.NumberColumn("Qtd")}, key=f"e_{ups}")
+            dados_entrada[ups] = {"df": editor, "fator": n_dia/n_nat, "regra": regra}
 
-        dados_entrada = {}
-        for ups in selecionadas:
-            with st.expander(f"⚙️ Configurar: {ups}", expanded=True):
-                regra = REGRAS_HORARIOS[ups]
-                opcoes = sorted(base['DISPLAY'].tolist()) if liberar else sorted(base[base['CELULA'] == ups]['DISPLAY'].tolist())
-                c1, c2 = st.columns(2)
-                n_nat = c1.number_input(f"N Nat ({ups})", value=regra['n_nat'], key=f"nat_{ups}")
-                n_dia = c2.number_input(f"N Dia ({ups})", value=regra['n_nat'], key=f"dia_{ups}")
-                editor = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
-                    column_config={"Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes, required=True), "Qtd": st.column_config.NumberColumn("Qtd", min_value=0)}, key=f"ed_{ups}_{st.session_state.get('reset_key', 0)}")
-                dados_entrada[ups] = {"df": editor, "fator": n_dia/n_nat, "regra": regra}
-
-        if st.button("🚀 GERAR RELATÓRIO COMPLETO"):
-            st.success("Relatório gerado! Use Ctrl+P para imprimir ou clique no botão ao final da página.")
-            for i, (ups, info) in enumerate(dados_entrada.items()):
-                if not info['df'].empty:
-                    r = calcular(info['df'], base, h_ini, info['fator'], tem_gin, info['regra'])
-                    # Container com classe para quebra de página
-                    st.markdown(f'<div class="ups-header"></div>', unsafe_allow_html=True)
-                    st.header(f"📊 Quadro de Produção: {ups}")
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Peças Totais", int(r['tot']))
-                    col2.metric("Término Estimado", r['termino'])
-                    col3.metric("Eficiência", f"{info['fator']:.2%}")
-                    
-                    def style_alm(row):
-                        return ['background-color: #fff3cd'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row)
-                    st.dataframe(r['df'].style.apply(style_alm, axis=1), use_container_width=True)
-                else:
-                    st.warning(f"{ups} está vazia.")
-            
-            # Botão invisível na interface mas que trigga o print do browser
-            st.markdown('<button onclick="window.print()" style="width:100%; padding:20px; background-color:#4CAF50; color:white; border:none; border-radius:5px; cursor:pointer;">🖨️ IMPRIMIR TODOS OS QUADROS AGORA</button>', unsafe_allow_html=True)
-    else: st.error("Erro Planilha.")
-except Exception as e: st.error(f"Erro: {e}")
+    if st.button("🚀 GERAR TUDO"):
+        for ups, info in dados_entrada.items():
+            if not info['df'].empty:
+                r = calcular(info['df'], base, h_ini, info['fator'], tem_gin, info['regra'])
+                st.markdown(f'<div class="ups-header"></div>', unsafe_allow_html=True)
+                st.subheader(f"QUADRO: {ups}")
+                m1, m2, m3 = st.columns(3)
+                m1.write(f"**Total:** {int(r['tot'])}")
+                m2.write(f"**Término:** {r['termino']}")
+                m3.write(f"**Eficiência:** {info['fator']:.2%}")
+                st.table(r['df'])
+        
+        st.markdown('<button onclick="window.print()" style="width:100%; padding:15px; background:#4CAF50; color:white; border:none; cursor:pointer;">🖨️ IMPRIMIR ECONOMIZANDO FOLHAS</button>', unsafe_allow_html=True)
+else:
+    st.error("Planilha não carregada. Verifique o link.")
