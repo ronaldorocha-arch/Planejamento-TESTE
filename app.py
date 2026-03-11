@@ -6,29 +6,28 @@ from datetime import datetime, timedelta
 # Configuração da página
 st.set_page_config(page_title="Tecnologia de Processos - NHS", page_icon="🏭", layout="wide")
 
-# --- ESTILO PARA IMPRESSÃO ULTRA ECONÔMICA ---
+# --- ESTILO PARA IMPRESSÃO LADO A LADO E ECONÔMICA ---
 st.markdown("""
     <style>
-    /* Esconde elementos desnecessários na impressão */
     @media print {
-        section[data-testid="stSidebar"], .stButton, footer, header, .stExpander, .stMarkdown:has(button) {
+        section[data-testid="stSidebar"], .stButton, footer, header, .stExpander, .stMarkdown:has(a) {
             display: none !important;
         }
         .main .block-container {
             padding: 0 !important;
             margin: 0 !important;
+            max-width: 100% !important;
         }
-        .stTable {
-            font-size: 11px !important;
+        /* Força as colunas a ficarem lado a lado no papel */
+        [data-testid="column"] {
+            width: 48% !important;
+            flex: 0 0 48% !important;
+            padding: 5px !important;
+            float: left !important;
         }
-        .print-section {
-            page-break-inside: avoid;
-            border-bottom: 1px dashed #000;
-            margin-bottom: 10px;
-            padding-bottom: 5px;
-        }
-        h2 { font-size: 16px !important; margin: 0 !important; padding: 0 !important; }
-        p { font-size: 12px !important; margin: 2px 0 !important; }
+        .stTable { font-size: 10px !important; }
+        h3 { font-size: 14px !important; margin-top: 5px !important; }
+        p { font-size: 10px !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -56,13 +55,16 @@ def carregar_base():
                 m_row = r
                 break
         if m_row == -1: return pd.DataFrame()
+        
         dados = df_raw.iloc[m_row+1:].copy()
         lista_final = []
         for i in range(len(dados)):
             mod = str(dados.iloc[i, 6]).strip()
             uni = pd.to_numeric(dados.iloc[i, 7], errors='coerce')
             cel = str(dados.iloc[i, 9]).strip()
-            if mod != 'nan' and len(mod) > 2 and not pd.isna(uni):
+            
+            # Limpeza: Ignora 'nan', 'NONE', vazios ou textos curtos demais
+            if mod.lower() not in ['nan', 'none', ''] and len(mod) > 2 and not pd.isna(uni):
                 lista_final.append({'ID': mod, 'UNIDADE_HORA': uni, 'CELULA': cel, 'DISPLAY': f"[{cel}] {mod}"})
         return pd.DataFrame(lista_final)
     except: return pd.DataFrame()
@@ -128,7 +130,7 @@ if not base.empty:
         st.rerun()
 
     dados_e = {}
-    # Carrega opções únicas para evitar o erro de aparecer apenas 1
+    # Pega apenas os nomes de modelos válidos para o seletor
     opcoes_completas = sorted(base['DISPLAY'].unique().tolist())
 
     for ups in selecionadas:
@@ -138,31 +140,32 @@ if not base.empty:
             nn = c1.number_input(f"N Nat ({ups})", value=reg['n_nat'], key=f"n_{ups}")
             nd = c2.number_input(f"N Dia ({ups})", value=reg['n_nat'], key=f"d_{ups}")
             ed = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
-                column_config={
-                    "Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes_completas, required=True), 
-                    "Qtd": st.column_config.NumberColumn("Qtd", min_value=0)
-                }, key=f"e_{ups}_{st.session_state.get('rk', 0)}")
+                column_config={"Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes_completas, required=True), "Qtd": st.column_config.NumberColumn("Qtd")}, key=f"e_{ups}_{st.session_state.get('rk', 0)}")
             dados_e[ups] = {"df": ed, "fat": nd/nn, "reg": reg}
 
-    if st.button("🚀 GERAR QUADROS"):
+    if st.button("🚀 GERAR QUADROS PARA IMPRESSÃO"):
+        # Cria colunas para exibir lado a lado
+        cols = st.columns(2)
+        idx = 0
         for ups, info in dados_e.items():
             if not info['df'].empty:
                 r = calcular(info['df'], base, h_ini, info['fat'], tem_gin, info['reg'])
-                st.markdown(f'<div class="print-section">', unsafe_allow_html=True)
-                st.subheader(f"QUADRO: {ups}")
-                st.write(f"**Total:** {int(r['tot'])} pçs | **Término:** {r['term']} | **Eficiência:** {info['fat']:.2%}")
-                st.table(r['df'])
-                st.markdown('</div>', unsafe_allow_html=True)
+                with cols[idx % 2]: # Alterna entre as colunas
+                    st.markdown(f'### QUADRO: {ups}')
+                    st.write(f"**Total:** {int(r['tot'])} | **Fim:** {r['term']} | **Ef:** {info['fat']:.1%}")
+                    st.table(r['df'])
+                idx += 1
         
-        # Novo botão de impressão via HTML direto
-        st.markdown('''
-            <br>
-            <a href="javascript:window.print()" style="text-decoration:none;">
-                <div style="background-color:#4CAF50; color:white; padding:15px; text-align:center; border-radius:10px; font-weight:bold; cursor:pointer;">
-                    🖨️ IMPRIMIR ECONOMIZANDO PAPEL (CLIQUE AQUI)
-                </div>
-            </a>
-            <br>
-        ''', unsafe_allow_html=True)
+        # Botão de impressão com script para forçar abertura
+        st.components.v1.html("""
+            <script>
+                function imprimir() {
+                    window.print();
+                }
+            </script>
+            <button onclick="imprimir()" style="width:100%; height:50px; background:#4CAF50; color:white; border:none; border-radius:10px; font-weight:bold; cursor:pointer;">
+                🖨️ ABRIR JANELA DE IMPRESSÃO
+            </button>
+        """, height=70)
 else:
-    st.error("Erro ao carregar base. Verifique se a planilha tem a coluna 'MODELO'.")
+    st.error("Erro na Planilha. Verifique os dados.")
