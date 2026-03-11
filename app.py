@@ -3,11 +3,12 @@ import pandas as pd
 import math
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Planejador NHS", page_icon="🏭", layout="wide")
+# Configuração da página - Mudei o título para você saber que está no LAB
+st.set_page_config(page_title="🧪 LAB - Planejador NHS", page_icon="🧪", layout="wide")
 
 URL_BASE = "https://docs.google.com/spreadsheets/d/11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E/export?format=csv&gid=0"
 
-# --- CONFIGURAÇÃO DE HORÁRIOS REAIS ---
+# --- CONFIGURAÇÃO DE HORÁRIOS REAIS (Conforme sua lista) ---
 REGRAS_HORARIOS = {
     "UPS - 1": {"cafe_m": "09:20", "almoco": "11:30", "cafe_t": "15:20", "n_nat": 5},
     "UPS - 2": {"cafe_m": "09:00", "almoco": "11:30", "cafe_t": "15:00", "n_nat": 3},
@@ -30,15 +31,19 @@ def carregar_base():
                 m_row = r
                 break
         if m_row == -1: return pd.DataFrame()
+        
         dados = df_raw.iloc[m_row+1:m_row+3000].copy()
         lista_final, celula_atual = [], "Indefinida"
+        
         for i in range(len(dados)):
             modelo = str(dados.iloc[i, 6]).strip()
             unidade = pd.to_numeric(dados.iloc[i, 7], errors='coerce')
             descricao = str(dados.iloc[i, 8]).strip()
             cel_na_linha = str(dados.iloc[i, 9]).strip().upper()
+
             if any(x in cel_na_linha for x in ["UPS", "ACS", "ACE"]):
                 celula_atual = str(dados.iloc[i, 9]).strip()
+            
             if modelo != 'nan' and len(modelo) > 3 and not pd.isna(unidade):
                 lista_final.append({
                     'ID': modelo, 'UNIDADE_HORA': unidade, 'DESCRICAO': descricao,
@@ -59,10 +64,7 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
     m_cafe_t = para_min(regras['cafe_t'])
     m_gin = para_min("09:30")
 
-    # Grade baseada no horário de início fornecido pelo usuário e depois segue os marcos
     marcos_estaticos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
-    
-    # Criar a lista de pontos começando pelo input do usuário
     pontos_horario = [h_ini_input] + [m for m in marcos_estaticos if para_min(m) > para_min(h_ini_input)]
     
     grade = []
@@ -101,40 +103,33 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
         while c_idx < len(df_in):
             t_p = df_in.loc[c_idx, 'T_PC']
             if pd.isna(t_p) or t_p <= 0: c_idx += 1; continue
-            
             if acum >= (t_p - 0.001):
                 q = min(math.floor(acum / t_p + 0.001), df_in.loc[c_idx, 'FALTA'])
                 if q > 0:
-                    acum -= (q * t_p)
-                    df_in.loc[c_idx, 'FALTA'] -= q
+                    acum -= (q * t_p); df_in.loc[c_idx, 'FALTA'] -= q
                     tot += q; p_b += q
                     mods.append(f"{df_in.loc[c_idx, 'ID']} ({int(q)} pçs)")
                 if df_in.loc[c_idx, 'FALTA'] <= 0: c_idx += 1
                 else: break
             else: break
-            
         res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_b), 'Acumulada': int(tot)})
-        
         if tot >= total_desejado and termino == "Não finalizado" and total_desejado > 0:
             minutos_usados = s['Minutos'] - acum
             h_str, m_str = s['Horário'].split(' – ')[0].split(':')
             dt_base = datetime.strptime(f"{h_str}:{m_str}", "%H:%M") + timedelta(minutes=minutos_usados)
             termino = dt_base.strftime("%H:%M")
-
     return {'df': pd.DataFrame(res), 'tot': tot, 'termino': termino}
 
 # --- INTERFACE ---
 try:
     base = carregar_base()
     if not base.empty:
-        st.sidebar.title("⚙️ Controle")
+        st.sidebar.title("🧪 Painel de Testes")
         lista_ups = sorted(base['CELULA'].unique().tolist())
         sel_ups = st.sidebar.selectbox("Selecionar Célula", lista_ups)
         regra_atual = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
         
-        # CAMPO DE VOLTA: Agora você pode editar se quiser, mas inicia em 07:45
         h_ini = st.sidebar.text_input("Início da Produção", value="07:45")
-        
         tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
         n_nat = st.sidebar.number_input("N Natural", value=regra_atual['n_nat'], min_value=1)
         n_dia = st.sidebar.number_input("N do Dia", value=regra_atual['n_nat'], min_value=1)
@@ -143,9 +138,9 @@ try:
         df_f = base[base['CELULA'] == sel_ups]
         opcoes = sorted(df_f['DISPLAY'].tolist())
         col1, col2 = st.columns([0.8, 0.2])
-        with col1: st.header(f"📋 Programação: {sel_ups}")
+        with col1: st.header(f"📋 Planejamento: {sel_ups}")
         with col2: 
-            if st.button("🗑️ Limpar Tudo"): 
+            if st.button("🗑️ Limpar"): 
                 st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
                 st.rerun()
 
@@ -157,20 +152,18 @@ try:
             if not df_editor.empty:
                 r = calcular(df_editor, base, h_ini, fator, tem_gin, regra_atual)
                 st.divider()
-                
-                # --- MÉTRICAS NO TOPO ---
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Planejado", f"{int(r['tot'])} pçs")
                 c2.metric("Término Estimado", r['termino'])
                 c3.metric("Eficiência", f"{fator:.2%}")
                 
                 c4, c5, c6 = st.columns(3)
-                c4.metric("☕ Café Manhã", regra_atual['cafe_m'])
+                c4.metric("☕ Café M", regra_atual['cafe_m'])
                 c5.metric("🍱 Almoço", regra_atual['almoco'])
-                c6.metric("☕ Café Tarde", regra_atual['cafe_t'])
+                c6.metric("☕ Café T", regra_atual['cafe_t'])
                 
-                st.subheader("🗓️ Cronograma de Produção")
+                st.subheader("🗓️ Cronograma")
                 st.table(r['df']) 
-            else: st.warning("Adicione modelos na tabela.")
-    else: st.error("⚠️ Erro na Planilha.")
+            else: st.warning("Adicione modelos.")
+    else: st.error("⚠️ Verifique a planilha.")
 except Exception as e: st.error(f"Erro Crítico: {e}")
