@@ -43,7 +43,7 @@ def carregar_base():
             if modelo != 'nan' and len(modelo) > 3 and not pd.isna(unidade):
                 lista_final.append({
                     'ID': modelo, 'UNIDADE_HORA': unidade, 'DESCRICAO': descricao,
-                    'CELULA': celula_atual, 'DISPLAY': f"{modelo} - {descricao} ({unidade} pç/h)"
+                    'CELULA': celula_atual, 'DISPLAY': f"[{celula_atual}] {modelo} - {descricao}"
                 })
         return pd.DataFrame(lista_final)
     except Exception as e:
@@ -68,7 +68,6 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
         p_ini = para_min(pontos_horario[i])
         p_fim = para_min(pontos_horario[i+1])
         
-        # Identifica se o bloco é o de almoço padrão
         is_almoco_bloco = (p_ini == m_almoco_padrao_ini and p_fim == m_almoco_padrao_fim)
         
         minutos_uteis = 0
@@ -77,7 +76,6 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
                 is_cafe_m = (m_cafe_m <= m < m_cafe_m + 10)
                 is_cafe_t = (m_cafe_t <= m < m_cafe_t + 10)
                 is_ginast = (m_gin <= m < m_gin + 10) if tem_gin else False
-                # Almoço ainda bloqueia minutos se houver sobreposição fora do bloco exato
                 is_almoco = (m_almoco_padrao_ini <= m < m_almoco_padrao_fim)
                 
                 if not (is_cafe_m or is_cafe_t or is_ginast or is_almoco):
@@ -135,8 +133,11 @@ try:
     if not base.empty:
         st.sidebar.title("🧪 Painel de Testes")
         lista_ups = sorted(base['CELULA'].unique().tolist())
-        sel_ups = st.sidebar.selectbox("Selecionar Célula", lista_ups)
+        sel_ups = st.sidebar.selectbox("Selecionar Célula (Onde será produzido)", lista_ups)
         regra_atual = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
+        
+        # NOVA FUNÇÃO: Checkbox para liberar todos os modelos
+        liberar_modelos = st.sidebar.checkbox("🔓 Ver modelos de outras UPS?", value=False)
         
         h_ini = st.sidebar.text_input("Início da Produção", value="07:45")
         tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
@@ -144,8 +145,14 @@ try:
         n_dia = st.sidebar.number_input("N do Dia", value=regra_atual['n_nat'], min_value=1)
         fator = n_dia / n_nat
 
-        df_f = base[base['CELULA'] == sel_ups]
-        opcoes = sorted(df_f['DISPLAY'].tolist())
+        # Logica de opcoes baseada no checkbox
+        if liberar_modelos:
+            opcoes = sorted(base['DISPLAY'].tolist())
+            st.sidebar.warning("Atenção: Você está selecionando modelos de outras células!")
+        else:
+            df_f = base[base['CELULA'] == sel_ups]
+            opcoes = sorted(df_f['DISPLAY'].tolist())
+
         col1, col2 = st.columns([0.8, 0.2])
         with col1: st.header(f"📋 Planejamento: {sel_ups}")
         with col2: 
@@ -169,12 +176,11 @@ try:
                 
                 c4, c5, c6 = st.columns(3)
                 c4.metric("☕ Café M", regra_atual['cafe_m'])
-                c5.metric("🍱 Almoço (Tabela)", regra_atual['almoco']) # Mantém a descrição da sua lista
+                c5.metric("🍱 Almoço (Métrico)", regra_atual['almoco'])
                 c6.metric("☕ Café T", regra_atual['cafe_t'])
                 
                 st.subheader("🗓️ Cronograma de Produção")
                 
-                # Função para estilizar a linha de almoço
                 def style_table(row):
                     if "🍱" in str(row.Modelos):
                         return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row)
