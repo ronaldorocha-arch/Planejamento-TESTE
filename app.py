@@ -54,27 +54,20 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
     def para_min(h_str):
         h, m = map(int, h_str.split(':'))
         return h * 60 + m
-    m_cafe_m = para_min(regras['cafe_m'])
-    m_almoco_padrao_ini = para_min("11:30")
-    m_almoco_padrao_fim = para_min("12:30")
-    m_cafe_t = para_min(regras['cafe_t'])
-    m_gin = para_min("09:30")
-    marcos_estaticos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
-    pontos_horario = [h_ini_input] + [m for m in marcos_estaticos if para_min(m) > para_min(h_ini_input)]
+    m_cafe_m, m_alm_i, m_alm_f, m_cafe_t, m_gin = para_min(regras['cafe_m']), para_min("11:30"), para_min("12:30"), para_min(regras['cafe_t']), para_min("09:30")
+    marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
+    pontos = [h_ini_input] + [m for m in marcos if para_min(m) > para_min(h_ini_input)]
     grade = []
-    for i in range(len(pontos_horario)-1):
-        p_ini = para_min(pontos_horario[i]); p_fim = para_min(pontos_horario[i+1])
-        is_almoco_bloco = (p_ini == m_almoco_padrao_ini and p_fim == m_almoco_padrao_fim)
+    for i in range(len(pontos)-1):
+        p_ini, p_fim = para_min(pontos[i]), para_min(pontos[i+1])
+        is_almoco = (p_ini == m_alm_i and p_fim == m_alm_f)
         minutos_uteis = 0
-        if not is_almoco_bloco:
+        if not is_almoco:
             for m in range(p_ini, p_fim):
-                is_cafe_m = (m_cafe_m <= m < m_cafe_m + 10)
-                is_cafe_t = (m_cafe_t <= m < m_cafe_t + 10)
-                is_ginast = (m_gin <= m < m_gin + 10) if tem_gin else False
-                is_almoco = (m_almoco_padrao_ini <= m < m_almoco_padrao_fim)
-                if not (is_cafe_m or is_cafe_t or is_ginast or is_almoco):
+                if not ((m_cafe_m <= m < m_cafe_m + 10) or (m_cafe_t <= m < m_cafe_t + 10) or 
+                        (tem_gin and m_gin <= m < m_gin + 10) or (m_alm_i <= m < m_alm_f)):
                     minutos_uteis += 1
-        grade.append({'Horário': f"{pontos_horario[i]} – {pontos_horario[i+1]}", 'Minutos': minutos_uteis, 'Label': "🍱 INTERVALO DE ALMOÇO" if is_almoco_bloco else None})
+        grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': minutos_uteis, 'Label': "🍱 INTERVALO DE ALMOÇO" if is_almoco else None})
     return pd.DataFrame(grade)
 
 def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
@@ -115,15 +108,15 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
 try:
     base = carregar_base()
     if not base.empty:
-        if "dados_tabela" not in st.session_state:
-            st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
+        # A TABELA AGORA É GLOBAL NA SESSÃO PARA NÃO APAGAR NUNCA
+        if "tabela_fixa" not in st.session_state:
+            st.session_state.tabela_fixa = pd.DataFrame(columns=["Equipamento", "Qtd"])
 
         st.sidebar.markdown("### Tecnologia de Processos")
         st.sidebar.title("📋 Planejamento de Produção")
         
         lista_ups = sorted(base['CELULA'].unique().tolist())
-        default_index = lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0
-        sel_ups = st.sidebar.selectbox("Selecionar Célula", lista_ups, index=default_index)
+        sel_ups = st.sidebar.selectbox("Selecionar Célula Principal", lista_ups, index=lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0)
         
         regra_atual = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
         liberar_modelos = st.sidebar.checkbox("🔓 Liberar modelos de outras UPS?", value=False)
@@ -133,34 +126,32 @@ try:
         n_dia = st.sidebar.number_input("N do Dia", value=regra_atual['n_nat'], min_value=1)
         fator = n_dia / n_nat
 
-        # CORREÇÃO: Define as opções baseado estritamente no checkbox
-        if liberar_modelos:
-            opcoes_menu = sorted(base['DISPLAY'].tolist())
-        else:
-            opcoes_menu = sorted(base[base['CELULA'] == sel_ups]['DISPLAY'].tolist())
+        # AQUI ESTÁ O TRUQUE: O editor sempre vê todas as opções, mas o menu de sugestões muda
+        todas_opcoes = sorted(base['DISPLAY'].tolist())
+        opcoes_filtradas = todas_opcoes if liberar_modelos else sorted(base[base['CELULA'] == sel_ups]['DISPLAY'].tolist())
 
         col1, col2 = st.columns([0.8, 0.2])
         with col1: st.header(f"📋 Grade de Trabalho: {sel_ups}")
         with col2: 
             if st.button("🗑️ Limpar"): 
-                st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
+                st.session_state.tabela_fixa = pd.DataFrame(columns=["Equipamento", "Qtd"])
                 st.rerun()
 
-        # O editor usa opcoes_menu. Se o item já estiver na tabela mas não na lista (por causa do filtro), o Streamlit mantém.
-        st.session_state.dados_tabela = st.data_editor(
-            st.session_state.dados_tabela, 
+        # Usamos uma chave FIXA para o editor não resetar ao mudar o checkbox
+        st.session_state.tabela_fixa = st.data_editor(
+            st.session_state.tabela_fixa, 
             num_rows="dynamic", 
             use_container_width=True,
             column_config={
-                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes_menu, required=True), 
+                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes_filtradas, required=True), 
                 "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)
-            }, 
-            key=f"editor_estavel_{sel_ups}"
+            },
+            key="planejador_estavel" 
         )
 
         if st.button("🚀 Gerar Planejamento"):
-            if not st.session_state.dados_tabela.empty:
-                r = calcular(st.session_state.dados_tabela, base, h_ini, fator, tem_gin, regra_atual)
+            if not st.session_state.tabela_fixa.empty:
+                r = calcular(st.session_state.tabela_fixa, base, h_ini, fator, tem_gin, regra_atual)
                 st.divider()
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Total Planejado", f"{int(r['tot'])} pçs")
@@ -169,11 +160,8 @@ try:
                 c4, c5, c6 = st.columns(3)
                 c4.metric("☕ Café M", regra_atual['cafe_m']); c5.metric("🍱 Almoço", regra_atual['almoco']); c6.metric("☕ Café T", regra_atual['cafe_t'])
                 st.subheader("🗓️ Cronograma de Produção")
-                
                 def style_table(row):
                     return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row)
-                
                 st.dataframe(r['df'].style.apply(style_table, axis=1), use_container_width=True, hide_index=True)
             else: st.warning("Adicione modelos na tabela.")
-    else: st.error("⚠️ Verifique a planilha.")
 except Exception as e: st.error(f"Erro Crítico: {e}")
