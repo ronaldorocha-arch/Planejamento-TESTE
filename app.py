@@ -43,7 +43,9 @@ def carregar_base():
             if modelo != 'nan' and len(modelo) > 3 and not pd.isna(unidade):
                 lista_final.append({
                     'ID': modelo, 'UNIDADE_HORA': unidade, 'DESCRICAO': descricao,
-                    'CELULA': celula_atual, 'DISPLAY': f"[{celula_atual}] {modelo} - {descricao}"
+                    'CELULA': celula_atual, 
+                    # Aqui incluímos a unidade para você ver na hora de selecionar
+                    'DISPLAY': f"[{celula_atual}] {modelo} - {descricao} ({int(unidade)} pç/h)"
                 })
         return pd.DataFrame(lista_final)
     except Exception as e:
@@ -90,14 +92,12 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
     termino = "Não finalizado"
     for _, s in slots.iterrows():
         if s['Label']:
-            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Unid/h': '-', 'Peças': 0, 'Acumulada': tot})
+            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acumulada': tot})
             continue
         acum += s['Minutos']
         p_b, mods = 0, []
-        unidade_display = "-"
         while c_idx < len(df_in):
             t_p = df_in.loc[c_idx, 'T_PC']
-            unidade_display = str(int(df_in.loc[c_idx, 'UNIDADE_HORA']))
             if pd.isna(t_p) or t_p <= 0: c_idx += 1; continue
             if acum >= (t_p - 0.001):
                 q = min(math.floor(acum / t_p + 0.001), df_in.loc[c_idx, 'FALTA'])
@@ -108,7 +108,8 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
                 if df_in.loc[c_idx, 'FALTA'] <= 0: c_idx += 1
                 else: break
             else: break
-        res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Unid/h': unidade_display, 'Peças': int(p_b), 'Acumulada': int(tot)})
+        # Tabela final SEM a coluna Unid/h
+        res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_b), 'Acumulada': int(tot)})
         if tot >= total_desejado and termino == "Não finalizado" and total_desejado > 0:
             m_usados = s['Minutos'] - acum
             h_str, m_str = s['Horário'].split(' – ')[0].split(':')
@@ -143,8 +144,9 @@ try:
                 st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
                 st.rerun()
 
+        # Na tabela de seleção, o DISPLAY já contém a Unidade/Hora
         df_editor = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
-            column_config={"Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes, required=True), "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)}, 
+            column_config={"Equipamento": st.column_config.SelectboxColumn("Equipamento (Selecione o modelo)", options=opcoes, required=True), "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)}, 
             key=f"ed_{sel_ups}_{st.session_state.get('reset_key', 0)}")
 
         if st.button("🚀 Gerar Planejamento"):
