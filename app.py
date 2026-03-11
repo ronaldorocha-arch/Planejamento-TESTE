@@ -133,7 +133,11 @@ try:
         n_dia = st.sidebar.number_input("N do Dia", value=regra_atual['n_nat'], min_value=1)
         fator = n_dia / n_nat
 
-        todas_opcoes = sorted(base['DISPLAY'].tolist())
+        # CORREÇÃO: Define as opções baseado estritamente no checkbox
+        if liberar_modelos:
+            opcoes_menu = sorted(base['DISPLAY'].tolist())
+        else:
+            opcoes_menu = sorted(base[base['CELULA'] == sel_ups]['DISPLAY'].tolist())
 
         col1, col2 = st.columns([0.8, 0.2])
         with col1: st.header(f"📋 Grade de Trabalho: {sel_ups}")
@@ -142,12 +146,13 @@ try:
                 st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
                 st.rerun()
 
+        # O editor usa opcoes_menu. Se o item já estiver na tabela mas não na lista (por causa do filtro), o Streamlit mantém.
         st.session_state.dados_tabela = st.data_editor(
             st.session_state.dados_tabela, 
             num_rows="dynamic", 
             use_container_width=True,
             column_config={
-                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=todas_opcoes, required=True), 
+                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes_menu, required=True), 
                 "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)
             }, 
             key=f"editor_estavel_{sel_ups}"
@@ -165,11 +170,9 @@ try:
                 c4.metric("☕ Café M", regra_atual['cafe_m']); c5.metric("🍱 Almoço", regra_atual['almoco']); c6.metric("☕ Café T", regra_atual['cafe_t'])
                 st.subheader("🗓️ Cronograma de Produção")
                 
-                # FUNÇÃO PARA SUMIR COM O ÍNDICE (OS NÚMEROS DA LATERAL)
                 def style_table(row):
                     return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row)
                 
-                # AQUI ESTÁ A MUDANÇA: hide_index=True
                 st.dataframe(r['df'].style.apply(style_table, axis=1), use_container_width=True, hide_index=True)
             else: st.warning("Adicione modelos na tabela.")
     else: st.error("⚠️ Verifique a planilha.")
