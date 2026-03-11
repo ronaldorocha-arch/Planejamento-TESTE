@@ -106,8 +106,8 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
         res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_b), 'Acumulada': int(tot)})
         if tot >= total_desejado and termino == "Não finalizado" and total_desejado > 0:
             m_usados = s['Minutos'] - acum
-            h_str, m_str = s['Horário'].split(' – ')[0].split(':')
-            dt_base = datetime.strptime(f"{h_str}:{m_str}", "%H:%M") + timedelta(minutes=m_usados)
+            h_str, m_s = s['Horário'].split(' – ')[0].split(':')
+            dt_base = datetime.strptime(f"{h_str}:{m_s}", "%H:%M") + timedelta(minutes=m_usados)
             termino = dt_base.strftime("%H:%M")
     return {'df': pd.DataFrame(res), 'tot': tot, 'termino': termino}
 
@@ -115,11 +115,9 @@ def calcular(df_in, df_ba, h_ini, fat, tem_gin, regras):
 try:
     base = carregar_base()
     if not base.empty:
-        # Recupera dados da sessão para não perder a programação
         if "dados_tabela" not in st.session_state:
             st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
 
-        # Tecnologia de Processos de volta para a barra lateral
         st.sidebar.markdown("### Tecnologia de Processos")
         st.sidebar.title("📋 Planejamento de Produção")
         
@@ -135,7 +133,7 @@ try:
         n_dia = st.sidebar.number_input("N do Dia", value=regra_atual['n_nat'], min_value=1)
         fator = n_dia / n_nat
 
-        opcoes = sorted(base['DISPLAY'].tolist()) if liberar_modelos else sorted(base[base['CELULA'] == sel_ups]['DISPLAY'].tolist())
+        todas_opcoes = sorted(base['DISPLAY'].tolist())
 
         col1, col2 = st.columns([0.8, 0.2])
         with col1: st.header(f"📋 Grade de Trabalho: {sel_ups}")
@@ -144,16 +142,15 @@ try:
                 st.session_state.dados_tabela = pd.DataFrame(columns=["Equipamento", "Qtd"])
                 st.rerun()
 
-        # Editor de dados que mantém o estado
         st.session_state.dados_tabela = st.data_editor(
             st.session_state.dados_tabela, 
             num_rows="dynamic", 
             use_container_width=True,
             column_config={
-                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=opcoes, required=True), 
+                "Equipamento": st.column_config.SelectboxColumn("Equipamento", options=todas_opcoes, required=True), 
                 "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)
             }, 
-            key=f"editor_{sel_ups}"
+            key=f"editor_estavel_{sel_ups}"
         )
 
         if st.button("🚀 Gerar Planejamento"):
@@ -167,9 +164,13 @@ try:
                 c4, c5, c6 = st.columns(3)
                 c4.metric("☕ Café M", regra_atual['cafe_m']); c5.metric("🍱 Almoço", regra_atual['almoco']); c6.metric("☕ Café T", regra_atual['cafe_t'])
                 st.subheader("🗓️ Cronograma de Produção")
+                
+                # FUNÇÃO PARA SUMIR COM O ÍNDICE (OS NÚMEROS DA LATERAL)
                 def style_table(row):
                     return ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row)
-                st.dataframe(r['df'].style.apply(style_table, axis=1), use_container_width=True)
+                
+                # AQUI ESTÁ A MUDANÇA: hide_index=True
+                st.dataframe(r['df'].style.apply(style_table, axis=1), use_container_width=True, hide_index=True)
             else: st.warning("Adicione modelos na tabela.")
     else: st.error("⚠️ Verifique a planilha.")
 except Exception as e: st.error(f"Erro Crítico: {e}")
