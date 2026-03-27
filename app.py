@@ -21,16 +21,19 @@ REGRAS_HORARIOS = {
     "ACS - 01": {"cafe_m": "09:50", "almoco": "11:45", "cafe_t": "15:50", "n_nat": 3},
 }
 
-# --- FUNÇÃO DE CLIMA CORRIGIDA ---
+# --- FUNÇÃO DE CLIMA AJUSTADA ---
 def pegar_clima():
     try:
-        # Puxa temperatura e condição (ex: Sol, Chuva) em português
+        # Puxa condição, temperatura e descrição
         url = "https://wttr.in/Curitiba?format=%c+%t+%C&lang=pt"
         response = requests.get(url, timeout=3)
         if response.status_code == 200:
             texto = response.text.strip()
-            # Limpa caracteres especiais de codificação
-            return texto.encode('latin1').decode('utf8')
+            # Converte codificação para evitar erros de acento
+            texto = texto.encode('latin1').decode('utf8')
+            # Remove o sinal de "+" das temperaturas positivas
+            texto = texto.replace('+', '')
+            return texto
         return "Clima indisponível"
     except:
         return "Clima indisponível"
@@ -134,7 +137,6 @@ try:
         st.sidebar.title("📋 Planejamento NHS")
         
         lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
-        # FORÇA COMEÇAR NA UPS - 1
         idx_inicial = lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0
         
         sel_ups = st.sidebar.selectbox("Selecionar Célula de Trabalho", lista_ups, index=idx_inicial)
@@ -147,10 +149,13 @@ try:
 
         opcoes = sorted(base['DISPLAY'].tolist()) if liberar_modelos else sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
 
-        # CABEÇALHO COM CLIMA AO LADO DOS BOTÕES
-        col_tit, col_clim, col_btn = st.columns([0.5, 0.3, 0.2])
+        # CABEÇALHO COM CLIMA AUMENTADO
+        col_tit, col_clim, col_btn = st.columns([0.45, 0.4, 0.15])
         with col_tit: st.header(f"📋 Planejamento: {sel_ups}")
-        with col_clim: st.write(f"📍 Curitiba: **{pegar_clima()}**")
+        with col_clim: 
+            clima_info = pegar_clima()
+            # HTML para aumentar apenas o ícone e formatar o texto
+            st.markdown(f"<div style='font-size: 20px; padding-top: 10px;'>📍 Curitiba: <b>{clima_info}</b></div>", unsafe_allow_html=True)
         with col_btn:
             if st.button("🗑️ Limpar"):
                 st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
