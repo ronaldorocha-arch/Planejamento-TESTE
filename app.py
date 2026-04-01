@@ -4,13 +4,13 @@ import math
 import requests
 from datetime import datetime, timedelta
 
-# Configuração da página
+# 1. Configuração da página
 st.set_page_config(page_title="Planejamento de Produção - NHS", page_icon="🏭", layout="wide")
 
-# URL corrigida para garantir que o Google envie os dados mais recentes
+# URL da sua planilha (Garante que pegue a aba correta e formato CSV)
 URL_BASE = "https://docs.google.com/spreadsheets/d/11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E/export?format=csv&gid=0"
 
-# --- CONFIGURAÇÃO DE HORÁRIOS REAIS ---
+# --- CONFIGURAÇÃO DE HORÁRIOS ---
 REGRAS_HORARIOS = {
     "UPS - 1": {"cafe_m": "09:20", "almoco": "11:30", "cafe_t": "15:20", "n_nat": 5},
     "UPS - 2": {"cafe_m": "09:00", "almoco": "11:30", "cafe_t": "15:00", "n_nat": 3},
@@ -22,52 +22,57 @@ REGRAS_HORARIOS = {
     "ACS - 01": {"cafe_m": "09:50", "almoco": "11:45", "cafe_t": "15:50", "n_nat": 3},
 }
 
-# --- FUNÇÃO DE CLIMA AJUSTADA (FORÇANDO CELSIUS) ---
+# --- FUNÇÃO DE CLIMA (CORRIGIDA PARA CELSIUS) ---
 def pegar_clima():
     try:
-        # O parâmetro &m força unidades métricas (Celsius)
+        # O parâmetro 'm' força o sistema métrico (Celsius)
         url = "https://wttr.in/Curitiba?format=%c+%t+%C&lang=pt&m"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
-            texto = response.text.strip().replace('+', '')
-            return texto
+            return response.text.strip().replace('+', '')
         return "Clima indisponível"
     except:
         return "Clima indisponível"
 
-@st.cache_data(ttl=10) # Tempo de cache curto para atualizar rápido
+# --- CARREGAMENTO DA BASE COM DIAGNÓSTICO ---
+@st.cache_data(ttl=10)
 def carregar_base():
     try:
-        # Lê a planilha bruta
+        # Tenta ler a planilha
         df_raw = pd.read_csv(URL_BASE, header=None).astype(str)
         
-        # BUSCA DINÂMICA: Procura onde está a palavra "MODELO" em qualquer lugar das primeiras 50 linhas
+        # Procura a palavra "MODELO" em qualquer lugar (Busca exaustiva)
         m_row, m_col = -1, -1
-        for r in range(min(50, len(df_raw))):
-            for c in range(min(15, len(df_raw.columns))):
-                if "MODELO" in str(df_raw.iloc[r, c]).upper():
+        for r in range(min(100, len(df_raw))):
+            for c in range(min(20, len(df_raw.columns))):
+                celula = str(df_raw.iloc[r, c]).strip().upper()
+                if celula == "MODELO":
                     m_row, m_col = r, c
                     break
             if m_row != -1: break
         
         if m_row == -1:
-            st.error("Cabeçalho 'MODELO' não encontrado na planilha.")
+            # Se não achar, mostra o que leu para ajudar a identificar o erro
+            st.error("❌ Não encontrei a coluna 'MODELO' na planilha.")
+            with st.expander("Clique para ver o diagnóstico da planilha"):
+                st.write("Dados brutos lidos (primeiras 15 linhas):")
+                st.dataframe(df_raw.head(15))
             return pd.DataFrame()
 
-        # Extrai os dados a partir da linha do cabeçalho
+        # Extração de dados
         dados = df_raw.iloc[m_row+1:].copy()
         lista_final = []
         celula_atual = "Indefinida"
         
         for i in range(len(dados)):
-            # Índices relativos à coluna onde "MODELO" foi encontrado
             modelo = str(dados.iloc[i, m_col]).strip()
+            # Cadência fica na coluna logo após o modelo
             unidade = pd.to_numeric(dados.iloc[i, m_col+1], errors='coerce')
             descricao = str(dados.iloc[i, m_col+2]).strip()
+            # Célula (UPS) fica 3 colunas após o modelo
             cel_na_linha = str(dados.iloc[i, m_col+3]).strip().upper()
             
-            # Atualiza a célula de origem (UPS) conforme percorre a lista
-            if any(x in cel_na_linha for x in ["UPS", "ACS", "ACE"]):
+            if any(x in cel_na_linha for x in ["UPS", "ACS", "ACE", "LINHA"]):
                 celula_atual = str(dados.iloc[i, m_col+3]).strip()
                 
             if modelo != 'nan' and len(modelo) > 2 and not pd.isna(unidade):
@@ -81,10 +86,10 @@ def carregar_base():
         
         return pd.DataFrame(lista_final)
     except Exception as e:
-        st.error(f"Erro ao ler planilha: {e}")
+        st.error(f"Erro de conexão: {e}")
         return pd.DataFrame()
 
-# --- FUNÇÕES DE CÁLCULO (MANTIDAS COM PEQUENOS AJUSTES DE SEGURANÇA) ---
+# --- LÓGICA DE CÁLCULO ---
 def gerar_grade_fixa(h_ini_input, regras, tem_gin):
     def para_min(h_str):
         h, m = map(int, h_str.split(':'))
@@ -110,7 +115,7 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
         grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': min_u, 'Label': "🍱 INTERVALO DE ALMOÇO" if is_alm else None})
     return pd.DataFrame(grade)
 
-def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino, nome_cel_destino):
+def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino):
     slots = gerar_grade_fixa(h_ini, regra_destino, tem_gin)
     df_in = df_in.merge(df_ba[['DISPLAY', 'ID', 'UNIDADE_HORA', 'CEL_ORIGEM']], left_on='Equipamento', right_on='DISPLAY', how='left')
     
@@ -130,7 +135,7 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino, nome_cel_destin
     
     for _, s in slots.iterrows():
         if s['Label']:
-            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acumulada': tot})
+            res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acumulada': int(tot)})
             continue
         
         acum += s['Minutos']
@@ -142,8 +147,8 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino, nome_cel_destin
                 c_idx += 1
                 continue
             
-            if acum >= (t_p - 0.001):
-                q = min(math.floor(acum / t_p + 0.001), df_in.loc[c_idx, 'FALTA'])
+            if acum >= (t_p - 0.0001):
+                q = min(math.floor(acum / t_p + 0.0001), df_in.loc[c_idx, 'FALTA'])
                 if q > 0:
                     acum -= (q * t_p)
                     df_in.loc[c_idx, 'FALTA'] -= q
@@ -153,78 +158,72 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino, nome_cel_destin
                 
                 if df_in.loc[c_idx, 'FALTA'] <= 0: 
                     c_idx += 1
-                else: 
-                    break
-            else: 
-                break
+                else: break
+            else: break
         
         res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_b), 'Acumulada': int(tot)})
         
         if tot >= total_d and termino == "Não finalizado" and total_d > 0:
             m_u = s['Minutos'] - acum
             h_s, m_s = s['Horário'].split(' – ')[0].split(':')
-            dt_b = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=m_u)
+            dt_b = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=int(m_u))
             termino = dt_b.strftime("%H:%M")
             
     return {'df': pd.DataFrame(res), 'tot': tot, 'termino': termino}
 
 # --- INTERFACE ---
-try:
-    base = carregar_base()
-    if not base.empty:
-        st.sidebar.markdown("### Tecnologia de Processos")
-        st.sidebar.title("📋 Planejamento NHS")
-        
-        lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
-        idx_inicial = lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0
-        
-        sel_ups = st.sidebar.selectbox("Selecionar Célula de Trabalho", lista_ups, index=idx_inicial)
-        regra_atual = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
-        
-        liberar_modelos = st.sidebar.checkbox("🔓 Ver modelos de outras UPS?", value=False)
-        h_ini = st.sidebar.text_input("Início da Produção", value="07:45")
-        tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
-        n_dia = st.sidebar.number_input(f"Nº de Pessoas hoje na {sel_ups}", value=regra_atual['n_nat'], min_value=1)
+base = carregar_base()
 
-        opcoes = sorted(base['DISPLAY'].tolist()) if liberar_modelos else sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
+if not base.empty:
+    st.sidebar.title("📋 Planejamento NHS")
+    
+    lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
+    idx_ini = lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0
+    
+    sel_ups = st.sidebar.selectbox("Selecionar Célula", lista_ups, index=idx_ini)
+    regra_at = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
+    
+    liberar = st.sidebar.checkbox("🔓 Ver modelos de todas UPS?", value=False)
+    h_ini = st.sidebar.text_input("Início da Produção", value="07:45")
+    tem_gin = st.sidebar.checkbox("Haverá Ginástica?", value=False)
+    n_dia = st.sidebar.number_input(f"Nº Pessoas na {sel_ups}", value=regra_at['n_nat'], min_value=1)
 
-        # CABEÇALHO
-        col_tit, col_clim, col_btn = st.columns([0.45, 0.4, 0.15])
-        with col_tit: st.header(f"📋 Planejamento: {sel_ups}")
-        with col_clim: 
-            clima_info = pegar_clima()
-            st.markdown(f"<div style='font-size: 20px; padding-top: 10px;'>📍 Curitiba: <b>{clima_info}</b></div>", unsafe_allow_html=True)
-        with col_btn:
-            if st.button("🗑️ Limpar"):
-                st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
-                st.rerun()
+    opcoes = sorted(base['DISPLAY'].tolist()) if liberar else sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
 
-        df_editor = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
-            column_config={
-                "Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes, required=True), 
-                "Qtd": st.column_config.NumberColumn("Qtd", min_value=0, default=0)
-            }, 
-            key=f"ed_{sel_ups}_{st.session_state.get('reset_key', 0)}")
+    # Cabeçalho com Clima
+    c1, c2, c3 = st.columns([0.45, 0.4, 0.15])
+    c1.header(f"📋 Célula: {sel_ups}")
+    with c2:
+        st.markdown(f"<div style='font-size: 20px; padding-top: 10px;'>📍 Curitiba: <b>{pegar_clima()}</b></div>", unsafe_allow_html=True)
+    if c3.button("🗑️ Limpar"):
+        st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
+        st.rerun()
 
-        if st.button("🚀 Gerar Planejamento"):
-            # Filtrar linhas vazias do editor
-            df_validos = df_editor.dropna(subset=['Equipamento'])
-            if not df_validos.empty:
-                r = calcular(df_validos, base, h_ini, n_dia, tem_gin, regra_atual, sel_ups)
-                st.divider()
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total Planejado", f"{int(r['tot'])} pçs")
-                c2.metric("Término Estimado", r['termino'])
-                c3.metric("Lotação da Linha", f"{n_dia} pessoas")
-                
-                st.subheader("🗓️ Cronograma de Produção")
-                st.dataframe(
-                    r['df'].style.apply(lambda row: ['background-color: #fff3cd; color: #856404; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row), axis=1), 
-                    use_container_width=True
-                )
-            else: 
-                st.warning("Adicione modelos e quantidades antes de gerar.")
-    else:
-        st.error("⚠️ A base de dados está vazia. Verifique o link da planilha e se a palavra 'MODELO' está presente.")
-except Exception as e: 
-    st.error(f"Erro Crítico: {e}")
+    # Tabela de Entrada
+    df_ed = st.data_editor(
+        pd.DataFrame(columns=["Equipamento", "Qtd"]), 
+        num_rows="dynamic", 
+        use_container_width=True,
+        column_config={
+            "Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes, required=True),
+            "Qtd": st.column_config.NumberColumn("Qtd", min_value=1)
+        },
+        key=f"ed_{sel_ups}_{st.session_state.get('reset_key', 0)}"
+    )
+
+    if st.button("🚀 Gerar Planejamento"):
+        df_v = df_ed.dropna(subset=['Equipamento'])
+        if not df_v.empty:
+            r = calcular(df_v, base, h_ini, n_dia, tem_gin, regra_at)
+            st.divider()
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Planejado", f"{int(r['tot'])} pçs")
+            m2.metric("Término Estimado", r['termino'])
+            m3.metric("Lotação da Linha", f"{n_dia} pessoas")
+            
+            st.dataframe(
+                r['df'].style.apply(lambda row: ['background-color: #fff3cd; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row), axis=1),
+                use_container_width=True
+            )
+        else:
+            st.warning("Selecione pelo menos um modelo.")
