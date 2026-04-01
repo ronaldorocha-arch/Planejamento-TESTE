@@ -2,86 +2,69 @@ import streamlit as st
 import pandas as pd
 import math
 import requests
+from io import StringIO
 from datetime import datetime, timedelta
 
-# Configuração da página
-st.set_page_config(page_title="Planejamento de Produção - NHS", page_icon="🏭", layout="wide")
+st.set_page_config(page_title="Planejamento NHS", page_icon="🏭", layout="wide")
 
-# Link direto para exportação CSV da sua planilha
+# ATENÇÃO: Verifique o GID no seu navegador e troque o '0' abaixo se necessário
 URL_BASE = "https://docs.google.com/spreadsheets/d/11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E/export?format=csv&gid=0"
 
-# --- CONFIGURAÇÃO DE HORÁRIOS REAIS ---
-REGRAS_HORARIOS = {
-    "UPS - 1": {"cafe_m": "09:20", "almoco": "11:30", "cafe_t": "15:20", "n_nat": 5},
-    "UPS - 2": {"cafe_m": "09:00", "almoco": "11:30", "cafe_t": "15:00", "n_nat": 3},
-    "UPS - 3": {"cafe_m": "09:10", "almoco": "11:50", "cafe_t": "15:10", "n_nat": 3},
-    "UPS - 4": {"cafe_m": "09:20", "almoco": "11:45", "cafe_t": "15:10", "n_nat": 3},
-    "UPS - 6": {"cafe_m": "09:30", "almoco": "11:45", "cafe_t": "15:30", "n_nat": 4},
-    "UPS - 7": {"cafe_m": "09:30", "almoco": "11:45", "cafe_t": "15:40", "n_nat": 4},
-    "UPS - 8": {"cafe_m": "09:40", "almoco": "11:45", "cafe_t": "15:40", "n_nat": 4},
-    "ACS - 01": {"cafe_m": "09:50", "almoco": "11:45", "cafe_t": "15:50", "n_nat": 3},
-}
-
-# --- FUNÇÃO DE CLIMA (FORÇANDO CELSIUS) ---
 def pegar_clima():
     try:
-        # 'm' força unidades métricas (Celsius)
         url = "https://wttr.in/Curitiba?format=%c+%t+%C&lang=pt&m"
-        response = requests.get(url, timeout=3)
-        if response.status_code == 200:
-            return response.text.strip().replace('+', '')
-        return "Clima indisponível"
-    except:
-        return "Clima indisponível"
+        r = requests.get(url, timeout=3)
+        return r.text.strip().replace('+', '') if r.status_code == 200 else "Clima indisponível"
+    except: return "Clima indisponível"
 
 @st.cache_data(ttl=5)
 def carregar_base():
     try:
-        # Lê a planilha bruta
-        df_raw = pd.read_csv(URL_BASE, header=None).astype(str)
+        # Forçamos o download via requests para evitar cache do pandas
+        response = requests.get(URL_BASE)
+        df_raw = pd.read_csv(StringIO(response.text), header=None).astype(str)
         
         m_row, m_col = -1, -1
-        # BUSCA AUTOMÁTICA: Procura onde está escrito "MODELO" na planilha toda
-        for r in range(min(50, len(df_raw))):
-            for c in range(len(df_raw.columns)):
-                if "MODELO" in str(df_raw.iloc[r, c]).upper():
+        # Busca exaustiva por 'MODELO'
+        for r in range(min(200, len(df_raw))):
+            for c in range(min(20, len(df_raw.columns))):
+                valor = str(df_raw.iloc[r, c]).strip().upper()
+                if valor == "MODELO":
                     m_row, m_col = r, c
                     break
             if m_row != -1: break
             
-        if m_row == -1:
-            st.error("❌ Não encontrei a coluna 'MODELO'. Verifique se o nome na planilha mudou.")
-            return pd.DataFrame()
+        if m_row == -1: return pd.DataFrame()
         
-        # Pega os dados a partir da linha encontrada
         dados = df_raw.iloc[m_row+1:].copy()
-        lista_final, celula_atual = [], "Indefinida"
+        lista_final, cel_atual = [], "Indefinida"
         
         for i in range(len(dados)):
-            modelo = str(dados.iloc[i, m_col]).strip()
-            # Unidade Hora está 1 coluna à direita do Modelo
-            unidade = pd.to_numeric(dados.iloc[i, m_col+1], errors='coerce')
-            # Descrição está 2 colunas à direita do Modelo
-            descricao = str(dados.iloc[i, m_col+2]).strip()
-            # UPS (Célula) está 3 colunas à direita do Modelo
-            cel_na_linha = str(dados.iloc[i, m_col+3]).strip().upper()
+            mod = str(dados.iloc[i, m_col]).strip()
+            # Cadência (coluna ao lado), Descrição (+2), UPS (+5 conforme sua imagem)
+            unid = pd.to_numeric(dados.iloc[i, m_col+1], errors='coerce')
+            desc = str(dados.iloc[i, m_col+2]).strip()
             
-            if any(x in cel_na_linha for x in ["UPS", "ACS", "ACE"]):
-                celula_atual = str(dados.iloc[i, m_col+3]).strip()
-            
-            # Filtro para não pegar linhas vazias ou de cabeçalho
-            if modelo != 'nan' and len(modelo) > 3 and not pd.isna(unidade):
+            # Na sua imagem a coluna UPS parece estar na coluna J (se Modelo é E, UPS é +5)
+            # Vamos testar colunas próximas para achar a UPS
+            for offset in [3, 4, 5]: 
+                col_val = str(dados.iloc[i, m_col+offset]).strip().upper()
+                if any(x in col_val for x in ["UPS", "ACS"]):
+                    cel_atual = str(dados.iloc[i, m_col+offset]).strip()
+                    break
+
+            if mod != 'nan' and len(mod) > 2 and not pd.isna(unid):
                 lista_final.append({
-                    'ID': modelo, 'UNIDADE_HORA': unidade, 'DESCRICAO': descricao,
-                    'CEL_ORIGEM': celula_atual, 
-                    'DISPLAY': f"[{celula_atual}] {modelo} - {descricao} ({int(unidade)} pç/h)"
+                    'ID': mod, 'UNIDADE_HORA': unid, 'DESCRICAO': desc,
+                    'CEL_ORIGEM': cel_atual, 
+                    'DISPLAY': f"[{cel_atual}] {mod} - {desc} ({int(unid)} pç/h)"
                 })
         return pd.DataFrame(lista_final)
     except Exception as e:
-        st.error(f"Erro na leitura: {e}")
+        st.error(f"Erro: {e}")
         return pd.DataFrame()
 
-# --- FUNÇÕES DE CÁLCULO ---
+# ... (Funções de cálculo gerar_grade_fixa e calcular permanecem as mesmas)
 def gerar_grade_fixa(h_ini_input, regras, tem_gin):
     def para_min(h_str):
         h, m = map(int, h_str.split(':'))
@@ -107,25 +90,20 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
 def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino):
     slots = gerar_grade_fixa(h_ini, regra_destino, tem_gin)
     df_in = df_in.merge(df_ba[['DISPLAY', 'ID', 'UNIDADE_HORA', 'CEL_ORIGEM']], left_on='Equipamento', right_on='DISPLAY', how='left')
-    
     def aplicar_conversao(row):
         u_b = row['UNIDADE_HORA']
         orig = row['CEL_ORIGEM']
         n_orig = REGRAS_HORARIOS.get(orig, {"n_nat": regra_destino['n_nat']})['n_nat']
         return (u_b / n_orig) * n_dia
-
     df_in['CAD_R'] = df_in.apply(aplicar_conversao, axis=1)
     df_in['T_PC'] = 60 / df_in['CAD_R']
     df_in['FALTA'] = pd.to_numeric(df_in['Qtd'], errors='coerce').fillna(0)
-    
     total_d, res, acum, c_idx, tot = df_in['FALTA'].sum(), [], 0.0, 0, 0
     termino = "Não finalizado"
-    
     for _, s in slots.iterrows():
         if s['Label']:
             res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acumulada': int(tot)})
             continue
-        
         acum += s['Minutos']
         p_b, mods = 0, []
         while c_idx < len(df_in):
@@ -139,62 +117,45 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino):
                 if df_in.loc[c_idx, 'FALTA'] <= 0: c_idx += 1
                 else: break
             else: break
-        
         res.append({'Horário': s['Horário'], 'Modelos': " + ".join(mods) if mods else "-", 'Peças': int(p_b), 'Acumulada': int(tot)})
-        
         if tot >= total_d and termino == "Não finalizado" and total_d > 0:
             m_u = s['Minutos'] - acum
             h_s, m_s = s['Horário'].split(' – ')[0].split(':')
             dt_b = datetime.strptime(f"{h_s}:{m_s}", "%H:%M") + timedelta(minutes=int(m_u))
             termino = dt_b.strftime("%H:%M")
-            
     return {'df': pd.DataFrame(res), 'tot': tot, 'termino': termino}
 
-# --- INTERFACE ---
-try:
-    base = carregar_base()
-    if not base.empty:
-        st.sidebar.title("📋 Planejamento NHS")
-        lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
-        sel_ups = st.sidebar.selectbox("Selecionar Célula", lista_ups)
-        
-        regra_atual = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
-        h_ini = st.sidebar.text_input("Início da Produção", value="07:45")
-        tem_gin = st.sidebar.checkbox("Haverá Ginástica Laboral?", value=False)
-        n_dia = st.sidebar.number_input(f"Pessoas na {sel_ups}", value=regra_atual['n_nat'], min_value=1)
-        
-        liberar_modelos = st.sidebar.checkbox("🔓 Ver todos os modelos?", value=False)
-        opcoes = sorted(base['DISPLAY'].tolist()) if liberar_modelos else sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
+REGRAS_HORARIOS = {
+    "UPS - 1": {"cafe_m": "09:20", "almoco": "11:30", "cafe_t": "15:20", "n_nat": 5},
+    "UPS - 2": {"cafe_m": "09:00", "almoco": "11:30", "cafe_t": "15:00", "n_nat": 3},
+    "UPS - 3": {"cafe_m": "09:10", "almoco": "11:50", "cafe_t": "15:10", "n_nat": 3},
+    "UPS - 6": {"cafe_m": "09:30", "almoco": "11:45", "cafe_t": "15:30", "n_nat": 4},
+}
 
-        col_tit, col_clim, col_btn = st.columns([0.45, 0.4, 0.15])
-        col_tit.header(f"📋 Célula: {sel_ups}")
-        col_clim.markdown(f"<div style='font-size: 20px; padding-top: 10px;'>📍 Curitiba: <b>{pegar_clima()}</b></div>", unsafe_allow_html=True)
-        
-        if col_btn.button("🗑️ Limpar"):
-            st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
-            st.rerun()
+# --- RENDERIZAÇÃO ---
+base = carregar_base()
+if not base.empty:
+    st.sidebar.title("📋 Planejamento NHS")
+    lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
+    sel_ups = st.sidebar.selectbox("Célula", lista_ups)
+    regra_at = next((v for k, v in REGRAS_HORARIOS.items() if k in sel_ups), REGRAS_HORARIOS["UPS - 1"])
+    h_ini = st.sidebar.text_input("Início", "07:45")
+    n_dia = st.sidebar.number_input("Pessoas", value=regra_at['n_nat'], min_value=1)
+    
+    col1, col2 = st.columns([0.6, 0.4])
+    col1.header(f"🏭 {sel_ups}")
+    col2.subheader(f"🌡️ {pegar_clima()}")
 
-        df_editor = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
-            column_config={
-                "Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes, required=True), 
-                "Qtd": st.column_config.NumberColumn("Qtd", min_value=1)
-            }, 
-            key=f"ed_{sel_ups}_{st.session_state.get('reset_key', 0)}")
+    opcoes = sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
+    df_ed = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
+                           column_config={"Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes),
+                                         "Qtd": st.column_config.NumberColumn("Qtd", min_value=1)})
 
-        if st.button("🚀 Gerar Planejamento"):
-            df_validos = df_editor.dropna(subset=['Equipamento'])
-            if not df_validos.empty:
-                r = calcular(df_validos, base, h_ini, n_dia, tem_gin, regra_atual)
-                st.divider()
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total Planejado", f"{int(r['tot'])} pçs")
-                c2.metric("Término Estimado", r['termino'])
-                c3.metric("Lotação", f"{n_dia} pessoas")
-                
-                st.dataframe(r['df'].style.apply(lambda row: ['background-color: #fff3cd; font-weight: bold'] * len(row) if "🍱" in str(row.Modelos) else [''] * len(row), axis=1), use_container_width=True)
-            else:
-                st.warning("Adicione modelos.")
-    else:
-        st.error("⚠️ Planilha não carregada. Verifique se a palavra 'MODELO' está na célula E2.")
-except Exception as e:
-    st.error(f"Erro Crítico: {e}")
+    if st.button("🚀 Gerar"):
+        df_v = df_ed.dropna(subset=['Equipamento'])
+        if not df_v.empty:
+            r = calcular(df_v, base, h_ini, n_dia, False, regra_at)
+            st.metric("Total", f"{int(r['tot'])} pçs", delta=r['termino'])
+            st.dataframe(r['df'], use_container_width=True)
+else:
+    st.error("⚠️ Planilha vazia ou GID incorreto. Verifique se a aba correta está publicada.")
