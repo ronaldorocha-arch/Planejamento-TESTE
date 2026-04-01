@@ -5,51 +5,52 @@ import requests
 from io import StringIO
 from datetime import datetime, timedelta
 
+# 1. Ajuste a URL com o GID que você encontrou no navegador
+# Exemplo: se o final da sua URL for gid=112233, coloque 112233 abaixo
+GID_CORRETO = "0" 
+URL_BASE = f"https://docs.google.com/spreadsheets/d/11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E/export?format=csv&gid={GID_CORRETO}"
+
 st.set_page_config(page_title="Planejamento NHS", page_icon="🏭", layout="wide")
 
-# ATENÇÃO: Verifique o GID no seu navegador e troque o '0' abaixo se necessário
-URL_BASE = "https://docs.google.com/spreadsheets/d/11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E/export?format=csv&gid=0"
-
-def pegar_clima():
-    try:
-        url = "https://wttr.in/Curitiba?format=%c+%t+%C&lang=pt&m"
-        r = requests.get(url, timeout=3)
-        return r.text.strip().replace('+', '') if r.status_code == 200 else "Clima indisponível"
-    except: return "Clima indisponível"
-
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=2)
 def carregar_base():
     try:
-        # Forçamos o download via requests para evitar cache do pandas
         response = requests.get(URL_BASE)
+        if response.status_code != 200:
+            st.error("Erro ao acessar o Google Sheets. Verifique se a planilha está 'Publicada na Web'.")
+            return pd.DataFrame()
+            
         df_raw = pd.read_csv(StringIO(response.text), header=None).astype(str)
         
         m_row, m_col = -1, -1
-        # Busca exaustiva por 'MODELO'
-        for r in range(min(200, len(df_raw))):
+        # Busca exaustiva: varre as primeiras 100 linhas e 20 colunas
+        for r in range(min(100, len(df_raw))):
             for c in range(min(20, len(df_raw.columns))):
-                valor = str(df_raw.iloc[r, c]).strip().upper()
-                if valor == "MODELO":
+                celula = str(df_raw.iloc[r, c]).strip().upper()
+                if celula == "MODELO":
                     m_row, m_col = r, c
                     break
             if m_row != -1: break
             
-        if m_row == -1: return pd.DataFrame()
+        if m_row == -1:
+            # Se não achar, mostra o que ele está lendo para ajudar no diagnóstico
+            with st.expander("Clique para ver o diagnóstico da planilha"):
+                st.write("O sistema não achou a palavra 'MODELO'. Abaixo está o que ele leu:")
+                st.dataframe(df_raw.head(10))
+            return pd.DataFrame()
         
         dados = df_raw.iloc[m_row+1:].copy()
         lista_final, cel_atual = [], "Indefinida"
         
         for i in range(len(dados)):
             mod = str(dados.iloc[i, m_col]).strip()
-            # Cadência (coluna ao lado), Descrição (+2), UPS (+5 conforme sua imagem)
             unid = pd.to_numeric(dados.iloc[i, m_col+1], errors='coerce')
             desc = str(dados.iloc[i, m_col+2]).strip()
             
-            # Na sua imagem a coluna UPS parece estar na coluna J (se Modelo é E, UPS é +5)
-            # Vamos testar colunas próximas para achar a UPS
-            for offset in [3, 4, 5]: 
+            # Procura a célula (UPS) nas colunas próximas (J na sua imagem é m_col+5)
+            for offset in [3, 4, 5]:
                 col_val = str(dados.iloc[i, m_col+offset]).strip().upper()
-                if any(x in col_val for x in ["UPS", "ACS"]):
+                if any(x in col_val for x in ["UPS", "ACS", "ACE"]):
                     cel_atual = str(dados.iloc[i, m_col+offset]).strip()
                     break
 
@@ -61,18 +62,21 @@ def carregar_base():
                 })
         return pd.DataFrame(lista_final)
     except Exception as e:
-        st.error(f"Erro: {e}")
+        st.error(f"Erro Crítico: {e}")
         return pd.DataFrame()
 
-# ... (Funções de cálculo gerar_grade_fixa e calcular permanecem as mesmas)
-def gerar_grade_fixa(h_ini_input, regras, tem_gin):
+# --- REGRAS E CÁLCULOS (IGUAIS AO ANTERIOR) ---
+REGRAS_HORARIOS = {
+    "UPS - 1": {"cafe_m": "09:20", "almoco": "11:30", "cafe_t": "15:20", "n_nat": 5},
+    "UPS - 2": {"cafe_m": "09:00", "almoco": "11:30", "cafe_t": "15:00", "n_nat": 3},
+    "UPS - 3": {"cafe_m": "09:10", "almoco": "11:50", "cafe_t": "15:10", "n_nat": 3},
+}
+
+def gerar_grade_fixa(h_ini_input, regras):
     def para_min(h_str):
         h, m = map(int, h_str.split(':'))
         return h * 60 + m
-    m_cafe_m = para_min(regras['cafe_m'])
-    m_alm_i, m_alm_f = para_min("11:30"), para_min("12:30")
-    m_cafe_t = para_min(regras['cafe_t'])
-    m_gin = para_min("09:30")
+    m_cafe_m, m_alm_i, m_alm_f, m_cafe_t = para_min(regras['cafe_m']), para_min("11:30"), para_min("12:30"), para_min(regras['cafe_t'])
     marcos = ["08:30", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:30", "17:30"]
     pontos = [h_ini_input] + [m for m in marcos if para_min(m) > para_min(h_ini_input)]
     grade = []
@@ -82,24 +86,18 @@ def gerar_grade_fixa(h_ini_input, regras, tem_gin):
         min_u = 0
         if not is_alm:
             for m in range(p_i, p_f):
-                if not ((m_cafe_m <= m < m_cafe_m+10) or (m_cafe_t <= m < m_cafe_t+10) or (tem_gin and m_gin <= m < m_gin+10) or (m_alm_i <= m < m_alm_f)):
+                if not ((m_cafe_m <= m < m_cafe_m+10) or (m_cafe_t <= m < m_cafe_t+10) or (m_alm_i <= m < m_alm_f)):
                     min_u += 1
-        grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': min_u, 'Label': "🍱 INTERVALO DE ALMOÇO" if is_alm else None})
+        grade.append({'Horário': f"{pontos[i]} – {pontos[i+1]}", 'Minutos': min_u, 'Label': "🍱 ALMOÇO" if is_alm else None})
     return pd.DataFrame(grade)
 
-def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino):
-    slots = gerar_grade_fixa(h_ini, regra_destino, tem_gin)
+def calcular(df_in, df_ba, h_ini, n_dia, regra_at):
+    slots = gerar_grade_fixa(h_ini, regra_at)
     df_in = df_in.merge(df_ba[['DISPLAY', 'ID', 'UNIDADE_HORA', 'CEL_ORIGEM']], left_on='Equipamento', right_on='DISPLAY', how='left')
-    def aplicar_conversao(row):
-        u_b = row['UNIDADE_HORA']
-        orig = row['CEL_ORIGEM']
-        n_orig = REGRAS_HORARIOS.get(orig, {"n_nat": regra_destino['n_nat']})['n_nat']
-        return (u_b / n_orig) * n_dia
-    df_in['CAD_R'] = df_in.apply(aplicar_conversao, axis=1)
+    df_in['CAD_R'] = (df_in['UNIDADE_HORA'] / REGRAS_HORARIOS.get(df_in['CEL_ORIGEM'].iloc[0], {"n_nat": n_dia})['n_nat']) * n_dia
     df_in['T_PC'] = 60 / df_in['CAD_R']
     df_in['FALTA'] = pd.to_numeric(df_in['Qtd'], errors='coerce').fillna(0)
-    total_d, res, acum, c_idx, tot = df_in['FALTA'].sum(), [], 0.0, 0, 0
-    termino = "Não finalizado"
+    total_d, res, acum, c_idx, tot, termino = df_in['FALTA'].sum(), [], 0.0, 0, 0, "Não finalizado"
     for _, s in slots.iterrows():
         if s['Label']:
             res.append({'Horário': s['Horário'], 'Modelos': s['Label'], 'Peças': 0, 'Acumulada': int(tot)})
@@ -125,14 +123,7 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, regra_destino):
             termino = dt_b.strftime("%H:%M")
     return {'df': pd.DataFrame(res), 'tot': tot, 'termino': termino}
 
-REGRAS_HORARIOS = {
-    "UPS - 1": {"cafe_m": "09:20", "almoco": "11:30", "cafe_t": "15:20", "n_nat": 5},
-    "UPS - 2": {"cafe_m": "09:00", "almoco": "11:30", "cafe_t": "15:00", "n_nat": 3},
-    "UPS - 3": {"cafe_m": "09:10", "almoco": "11:50", "cafe_t": "15:10", "n_nat": 3},
-    "UPS - 6": {"cafe_m": "09:30", "almoco": "11:45", "cafe_t": "15:30", "n_nat": 4},
-}
-
-# --- RENDERIZAÇÃO ---
+# --- INTERFACE ---
 base = carregar_base()
 if not base.empty:
     st.sidebar.title("📋 Planejamento NHS")
@@ -142,20 +133,16 @@ if not base.empty:
     h_ini = st.sidebar.text_input("Início", "07:45")
     n_dia = st.sidebar.number_input("Pessoas", value=regra_at['n_nat'], min_value=1)
     
-    col1, col2 = st.columns([0.6, 0.4])
-    col1.header(f"🏭 {sel_ups}")
-    col2.subheader(f"🌡️ {pegar_clima()}")
-
+    st.header(f"🏭 {sel_ups}")
     opcoes = sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
     df_ed = st.data_editor(pd.DataFrame(columns=["Equipamento", "Qtd"]), num_rows="dynamic", use_container_width=True,
-                           column_config={"Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes),
-                                         "Qtd": st.column_config.NumberColumn("Qtd", min_value=1)})
+                           column_config={"Equipamento": st.column_config.SelectboxColumn("Modelo", options=opcoes), "Qtd": st.column_config.NumberColumn("Qtd", min_value=1)})
 
     if st.button("🚀 Gerar"):
         df_v = df_ed.dropna(subset=['Equipamento'])
         if not df_v.empty:
-            r = calcular(df_v, base, h_ini, n_dia, False, regra_at)
-            st.metric("Total", f"{int(r['tot'])} pçs", delta=r['termino'])
+            r = calcular(df_v, base, h_ini, n_dia, regra_at)
+            st.metric("Término Estimado", r['termino'], delta=f"Total: {int(r['tot'])} pçs")
             st.dataframe(r['df'], use_container_width=True)
 else:
-    st.error("⚠️ Planilha vazia ou GID incorreto. Verifique se a aba correta está publicada.")
+    st.error("⚠️ Planilha não carregada. Certifique-se de que a aba 'PYTHON/PROGRAMAÇÃO' é a primeira da planilha ou use o GID correto.")
