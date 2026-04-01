@@ -11,6 +11,19 @@ st.set_page_config(page_title="Planejamento NHS", page_icon="🏭", layout="wide
 ID_PLANILHA = "11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E"
 URL_BASE = f"https://docs.google.com/spreadsheets/d/{ID_PLANILHA}/export?format=csv&gid=0"
 
+# --- MAPEAMENTO DE PESSOAS (N NATURAL) POR UPS ---
+# Adicione ou altere os valores abaixo conforme a realidade de cada linha
+MAPA_N_NATURAL = {
+    "UPS - 1": 5,
+    "UPS - 2": 3,
+    "UPS - 3": 3,
+    "UPS - 4": 3,
+    "UPS - 6": 4,
+    "UPS - 7": 4,
+    "UPS - 8": 4,
+    "ACS - 01": 3,
+}
+
 @st.cache_data(ttl=2)
 def carregar_base():
     try:
@@ -55,7 +68,7 @@ def carregar_base():
     except: return pd.DataFrame()
 
 # --- REGRAS DE CÁLCULO ---
-def calcular(df_in, df_ba, h_ini, n_dia, tem_gin):
+def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, sel_ups):
     def para_min(s):
         h, m = map(int, s.split(':'))
         return h * 60 + m
@@ -69,7 +82,13 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin):
     pontos = [h_ini] + [m for m in marcos if para_min(m) > m_ini]
     
     df_in = df_in.merge(df_ba, left_on='Equipamento', right_on='DISPLAY', how='left')
-    df_in['CAD_R'] = (df_in['UNIDADE_HORA'] / 5) * n_dia
+    
+    # Busca o N Natural da UPS de origem do modelo para o cálculo de conversão
+    def calcular_cadencia_real(row):
+        n_nominal_origem = MAPA_N_NATURAL.get(row['CEL_ORIGEM'], 5)
+        return (row['UNIDADE_HORA'] / n_nominal_origem) * n_dia
+
+    df_in['CAD_R'] = df_in.apply(calcular_cadencia_real, axis=1)
     df_in['T_PC'] = 60 / df_in['CAD_R']
     df_in['FALTA'] = pd.to_numeric(df_in['Qtd'])
     
@@ -123,14 +142,23 @@ base = carregar_base()
 
 if not base.empty:
     st.sidebar.title("🏭 NHS Produção")
+    
     lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
-    sel_ups = st.sidebar.selectbox("Célula de Trabalho", lista_ups)
+    
+    # Define a UPS - 1 como padrão no selectbox
+    default_index = lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0
+    sel_ups = st.sidebar.selectbox("Célula de Trabalho", lista_ups, index=default_index)
+    
+    # Atualiza o N de acordo com a UPS selecionada automaticamente
+    n_sugerido = MAPA_N_NATURAL.get(sel_ups, 5)
     
     liberar_modelos = st.sidebar.checkbox("🔓 Usar modelos de outras UPS?", value=False)
     tem_gin = st.sidebar.checkbox("🤸 Haverá Ginástica Laboral?", value=False)
     
     h_ini = st.sidebar.text_input("Início da Produção", "07:45")
-    n_dia = st.sidebar.number_input(f"Pessoas na {sel_ups}", 1, 20, 5)
+    
+    # O valor do number_input agora muda conforme a sel_ups muda
+    n_dia = st.sidebar.number_input(f"Pessoas na {sel_ups}", 1, 20, value=n_sugerido)
 
     st.header(f"📋 Planejamento: {sel_ups}")
     
@@ -146,13 +174,12 @@ if not base.empty:
     if st.button("🚀 Gerar Planejamento"):
         df_v = df_ed.dropna(subset=['Equipamento'])
         if not df_v.empty:
-            r = calcular(df_v, base, h_ini, n_dia, tem_gin)
+            r = calcular(df_v, base, h_ini, n_dia, tem_gin, sel_ups)
             st.divider()
             c1, c2 = st.columns(2)
             c1.metric("Total Planejado", f"{int(r['tot'])} pçs")
             c2.metric("Término Estimado", r['termino'])
             
-            # Função de cor corrigida para evitar o erro do print
             def style_almoco(row):
                 if "ALMOÇO" in str(row["Modelos"]):
                     return ['background-color: #fff3cd'] * len(row)
