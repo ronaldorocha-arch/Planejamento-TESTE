@@ -12,7 +12,6 @@ ID_PLANILHA = "11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E"
 URL_BASE = f"https://docs.google.com/spreadsheets/d/{ID_PLANILHA}/export?format=csv&gid=0"
 
 # --- MAPEAMENTO DE PESSOAS (N NATURAL) POR UPS ---
-# Adicione ou altere os valores abaixo conforme a realidade de cada linha
 MAPA_N_NATURAL = {
     "UPS - 1": 5,
     "UPS - 2": 3,
@@ -83,7 +82,6 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, sel_ups):
     
     df_in = df_in.merge(df_ba, left_on='Equipamento', right_on='DISPLAY', how='left')
     
-    # Busca o N Natural da UPS de origem do modelo para o cálculo de conversão
     def calcular_cadencia_real(row):
         n_nominal_origem = MAPA_N_NATURAL.get(row['CEL_ORIGEM'], 5)
         return (row['UNIDADE_HORA'] / n_nominal_origem) * n_dia
@@ -141,15 +139,15 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin, sel_ups):
 base = carregar_base()
 
 if not base.empty:
+    # --- ALTERAÇÃO SOLICITADA AQUI ---
+    st.sidebar.markdown("### Tecnologia de Processos")
     st.sidebar.title("🏭 NHS Produção")
     
     lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
     
-    # Define a UPS - 1 como padrão no selectbox
     default_index = lista_ups.index("UPS - 1") if "UPS - 1" in lista_ups else 0
     sel_ups = st.sidebar.selectbox("Célula de Trabalho", lista_ups, index=default_index)
     
-    # Atualiza o N de acordo com a UPS selecionada automaticamente
     n_sugerido = MAPA_N_NATURAL.get(sel_ups, 5)
     
     liberar_modelos = st.sidebar.checkbox("🔓 Usar modelos de outras UPS?", value=False)
@@ -157,7 +155,6 @@ if not base.empty:
     
     h_ini = st.sidebar.text_input("Início da Produção", "07:45")
     
-    # O valor do number_input agora muda conforme a sel_ups muda
     n_dia = st.sidebar.number_input(f"Pessoas na {sel_ups}", 1, 20, value=n_sugerido)
 
     st.header(f"📋 Planejamento: {sel_ups}")
