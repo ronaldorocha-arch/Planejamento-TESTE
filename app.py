@@ -6,7 +6,7 @@ from io import StringIO
 from datetime import datetime, timedelta
 
 # --- CONFIGURAÇÃO ---
-# O link abaixo é o link de EXPORTAÇÃO (necessário para o pandas ler)
+# Link de exportação direta em CSV
 URL_BASE = "https://docs.google.com/spreadsheets/d/11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E/export?format=csv&gid=0"
 
 st.set_page_config(page_title="Planejamento NHS", page_icon="🏭", layout="wide")
@@ -23,29 +23,33 @@ REGRAS_HORARIOS = {
     "ACS - 01": {"cafe_m": "09:50", "almoco": "11:45", "cafe_t": "15:50", "n_nat": 3},
 }
 
-@st.cache_data(ttl=10) # Atualiza a cada 10 segundos
+@st.cache_data(ttl=1) # Cache de apenas 1 segundo para testes
 def carregar_base():
     try:
         response = requests.get(URL_BASE, timeout=10)
-        
-        # Se retornar 401 ou 403, a planilha não foi publicada na web
         if response.status_code != 200:
-            st.error("🚨 Erro de Acesso: A planilha não está 'Publicada na Web'. Vá em Arquivo > Compartilhar > Publicar na Web.")
+            st.error(f"Erro de conexão: {response.status_code}")
             return pd.DataFrame()
             
-        df_raw = pd.read_csv(StringIO(response.text), header=None).astype(str)
+        # Lê o CSV da planilha publicada
+        texto_csv = response.text
+        df_raw = pd.read_csv(StringIO(texto_csv), header=None).astype(str)
         
         m_row, m_col = -1, -1
-        # Busca a palavra "MODELO" para encontrar o cabeçalho
-        for r in range(min(100, len(df_raw))):
-            for c in range(min(20, len(df_raw.columns))):
-                if "MODELO" in str(df_raw.iloc[r, c]).upper():
+        # Varre a planilha para achar o cabeçalho "MODELO"
+        for r in range(min(150, len(df_raw))):
+            for c in range(min(30, len(df_raw.columns))):
+                valor = str(df_raw.iloc[r, c]).strip().upper()
+                if valor == "MODELO":
                     m_row, m_col = r, c
                     break
             if m_row != -1: break
         
         if m_row == -1:
-            st.warning("⚠️ Planilha lida, mas a palavra 'MODELO' não foi encontrada na aba.")
+            # MOSTRA O ERRO E O QUE O SISTEMA LEU PARA AJUDAR
+            st.warning("⚠️ Palavra 'MODELO' não encontrada. Verifique se a aba correta está publicada.")
+            with st.expander("Diagnóstico: O que o sistema está lendo da planilha"):
+                st.dataframe(df_raw.head(20))
             return pd.DataFrame()
         
         dados = df_raw.iloc[m_row+1:].copy()
@@ -56,8 +60,8 @@ def carregar_base():
             unid = pd.to_numeric(dados.iloc[i, m_col+1], errors='coerce')
             desc = str(dados.iloc[i, m_col+2]).strip()
             
-            # Busca a UPS nas colunas à direita
-            for offset in [3, 4, 5, 6]:
+            # Procura a UPS nas colunas G, H, I, J, K (offsets de 3 a 7)
+            for offset in range(3, 8):
                 if (m_col + offset) < len(dados.columns):
                     val = str(dados.iloc[i, m_col+offset]).strip().upper()
                     if any(x in val for x in ["UPS", "ACS", "ACE"]):
@@ -70,12 +74,13 @@ def carregar_base():
                     'CEL_ORIGEM': cel_atual, 
                     'DISPLAY': f"[{cel_atual}] {mod} - {desc} ({int(unid)} pç/h)"
                 })
+        
         return pd.DataFrame(lista_final)
     except Exception as e:
         st.error(f"Erro Crítico: {e}")
         return pd.DataFrame()
 
-# --- LÓGICA DE CÁLCULO ---
+# --- FUNÇÕES DE CÁLCULO ---
 def gerar_grade(h_ini_input, regras):
     def para_min(h_str):
         h, m = map(int, h_str.split(':'))
@@ -132,14 +137,16 @@ def calcular(df_in, df_ba, h_ini, n_dia, regra_at):
     return {'df': pd.DataFrame(res), 'tot': tot, 'termino': termino}
 
 # --- INTERFACE ---
+st.sidebar.button("🔄 Atualizar Base")
 base = carregar_base()
+
 if not base.empty:
     st.sidebar.title("📋 Planejamento NHS")
     lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
     sel_ups = st.sidebar.selectbox("Célula de Trabalho", lista_ups)
     regra_at = REGRAS_HORARIOS.get(sel_ups, REGRAS_HORARIOS["UPS - 1"])
     h_ini = st.sidebar.text_input("Início da Produção", "07:45")
-    n_dia = st.sidebar.number_input(f"Nº de Pessoas ({sel_ups})", value=regra_at['n_nat'], min_value=1)
+    n_dia = st.sidebar.number_input(f"Nº de Pessoas hoje ({sel_ups})", value=regra_at['n_nat'], min_value=1)
     
     st.header(f"🏭 Linha: {sel_ups}")
     opcoes = sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
@@ -156,4 +163,4 @@ if not base.empty:
             c2.metric("📦 Total de Peças", f"{int(r['tot'])} pçs")
             st.dataframe(r['df'], use_container_width=True)
 else:
-    st.info("Aguardando carregamento da base... Verifique se a planilha está publicada.")
+    st.info("Aguardando carregamento da base... Verifique se a planilha está publicada e tem a palavra 'MODELO' na coluna correta.")
