@@ -21,20 +21,6 @@ REGRAS_HORARIOS = {
     "ACS - 01": {"cafe_m": "09:50", "almoco": "11:45", "cafe_t": "15:50", "n_nat": 3},
 }
 
-# --- FUNÇÃO DE CLIMA AJUSTADA ---
-def pegar_clima():
-    try:
-        url = "https://wttr.in/Curitiba?format=%c+%t+%C&lang=pt"
-        response = requests.get(url, timeout=3)
-        if response.status_code == 200:
-            texto = response.text.strip()
-            # Remove o sinal de "+" das temperaturas positivas
-            texto = texto.replace('+', '')
-            return texto
-        return "Clima indisponível"
-    except:
-        return "Clima indisponível"
-
 @st.cache_data(ttl=5)
 def carregar_base():
     try:
@@ -146,12 +132,9 @@ try:
 
         opcoes = sorted(base['DISPLAY'].tolist()) if liberar_modelos else sorted(base[base['CEL_ORIGEM'] == sel_ups]['DISPLAY'].tolist())
 
-        # CABEÇALHO COM CLIMA
-        col_tit, col_clim, col_btn = st.columns([0.45, 0.4, 0.15])
+        # CABEÇALHO SEM CLIMA
+        col_tit, col_btn = st.columns([0.85, 0.15])
         with col_tit: st.header(f"📋 Planejamento: {sel_ups}")
-        with col_clim: 
-            clima_info = pegar_clima()
-            st.markdown(f"<div style='font-size: 20px; padding-top: 10px;'>📍 Curitiba: <b>{clima_info}</b></div>", unsafe_allow_html=True)
         with col_btn:
             if st.button("🗑️ Limpar"):
                 st.session_state["reset_key"] = st.session_state.get("reset_key", 0) + 1
