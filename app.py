@@ -11,17 +11,6 @@ st.set_page_config(page_title="Planejamento NHS", page_icon="🏭", layout="wide
 ID_PLANILHA = "11-jv_ZFetz9xdbJY8JZwPFSc3gtB65duvtDlLEk4I2E"
 URL_BASE = f"https://docs.google.com/spreadsheets/d/{ID_PLANILHA}/export?format=csv&gid=0"
 
-# --- FUNÇÃO DE CLIMA ---
-def pegar_clima():
-    try:
-        url = "https://wttr.in/Curitiba?format=%c+%t+%C&lang=pt&m"
-        response = requests.get(url, timeout=3)
-        if response.status_code == 200:
-            return response.text.strip().replace('+', '')
-        return "Clima indisponível"
-    except:
-        return "Clima indisponível"
-
 @st.cache_data(ttl=2)
 def carregar_base():
     try:
@@ -94,7 +83,6 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin):
         min_u = 0
         if not is_alm:
             for m in range(p1, p2):
-                # Descontar Café Manhã, Café Tarde, Almoço e Ginástica (se ativa)
                 if not ((m_cafe_m <= m < m_cafe_m+10) or 
                         (m_cafe_t <= m < m_cafe_t+10) or 
                         (m_alm_i <= m < m_alm_f) or 
@@ -105,14 +93,13 @@ def calcular(df_in, df_ba, h_ini, n_dia, tem_gin):
         p_h, m_n = 0, []
         
         if is_alm:
-            res.append({'Horário': f"{pontos[p]} – {pontos[p+1]}", 'Modelos': "🍱 ALMOÇO", 'Peças': 0, 'Acum': int(tot)})
+            res.append({'Horário': f"{pontos[p]} – {pontos[p+1]}", 'Modelos': "🍱 INTERVALO DE ALMOÇO", 'Peças': 0, 'Acum': int(tot)})
             continue
 
         while idx < len(df_in):
             t_pc = df_in.loc[idx, 'T_PC']
             if acum >= (t_pc - 0.001):
-                q = min(math.floor(acum / t_pc + 0.001), df_ed.loc[idx, 'FALTA'] if 'FALTA' in df_ed else df_in.loc[idx, 'FALTA'])
-                q = min(q, df_in.loc[idx, 'FALTA'])
+                q = min(math.floor(acum / t_pc + 0.001), df_in.loc[idx, 'FALTA'])
                 if q > 0:
                     acum -= (q * t_pc)
                     df_in.loc[idx, 'FALTA'] -= q
@@ -139,18 +126,14 @@ if not base.empty:
     lista_ups = sorted(base['CEL_ORIGEM'].unique().tolist())
     sel_ups = st.sidebar.selectbox("Célula de Trabalho", lista_ups)
     
-    # NOVAS OPÇÕES SOLICITADAS
     liberar_modelos = st.sidebar.checkbox("🔓 Usar modelos de outras UPS?", value=False)
-    tem_gin = st.sidebar.checkbox("🤸 Teve Ginástica Laboral?", value=False)
+    tem_gin = st.sidebar.checkbox("🤸 Haverá Ginástica Laboral?", value=False)
     
     h_ini = st.sidebar.text_input("Início da Produção", "07:45")
     n_dia = st.sidebar.number_input(f"Pessoas na {sel_ups}", 1, 20, 5)
 
-    col_tit, col_clim = st.columns([0.6, 0.4])
-    with col_tit: st.header(f"📋 Planejamento: {sel_ups}")
-    with col_clim: st.markdown(f"<div style='font-size: 20px; padding-top: 10px; text-align: right;'>📍 Curitiba: <b>{pegar_clima()}</b></div>", unsafe_allow_html=True)
+    st.header(f"📋 Planejamento: {sel_ups}")
     
-    # Filtro de modelos baseado na chave do menu lateral
     if liberar_modelos:
         opcoes = sorted(base['DISPLAY'].tolist())
     else:
@@ -169,15 +152,16 @@ if not base.empty:
             c1.metric("Total Planejado", f"{int(r['tot'])} pçs")
             c2.metric("Término Estimado", r['termino'])
             
-            # Formatação para colorir o almoço
-            def colorir_almoco(val):
-                color = '#fff3cd' if 'ALMOÇO' in str(val) else ''
-                return f'background-color: {color}'
+            # Função de cor corrigida para evitar o erro do print
+            def style_almoco(row):
+                if "ALMOÇO" in str(row["Modelos"]):
+                    return ['background-color: #fff3cd'] * len(row)
+                return [''] * len(row)
 
             st.dataframe(
-                r['df'].style.applymap(colorir_almoco, subset=['Modelos']),
+                r['df'].style.apply(style_almoco, axis=1),
                 use_container_width=True,
-                height=400
+                height=450
             )
 else:
     st.error("⚠️ Base de dados não carregada. Verifique se a aba 'BASE' é a primeira da planilha.")
